@@ -10,7 +10,7 @@ import { SPRING } from "../design/motion";
 import { play } from "../design/sound";
 import { useSettings } from "../state/settings";
 
-const HOWTO_TEXT = "Try to occupy the whole field with your color. Tap your circles to grow them. When a circle reaches 4 white dots, it bursts and its dots fly into the neighbouring squares, capturing them. Last color standing wins!";
+const HOWTO_TEXT = "Try to occupy the whole field with your color. Tapping a cell gives it 3 dots (or adds 1 if it's yours). When a cell's dots reach its neighbor count, it splits and adds 1 dot to each neighbor, capturing them. Last color standing wins!";
 
 export function HomeFlow(props: {
   connected: boolean;
