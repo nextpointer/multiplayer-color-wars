@@ -1,0 +1,10 @@
+{
+  "name": "multiplayer-color-wars",
+  "private": true,
+  "workspaces": ["shared", "server", "client"],
+  "scripts": {
+    "dev:server": "npm run dev -w server",
+    "dev:client": "npm run dev -w client",
+    "build": "npm run build -w shared && npm run build -w client && npm run build -w server"
+  }
+}
