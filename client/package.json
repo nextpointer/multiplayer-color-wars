@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "dev": "bunx --bun vite",
+    "build": "bunx tsc -b && bunx vite build",
+    "preview": "bunx vite preview"
   },
   "dependencies": {
     "@game/shared": "1.0.0",

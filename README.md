@@ -12,15 +12,15 @@ Real-time multiplayer Chain Reaction game built with **React**, **Tailwind CSS**
 
 ## Setup
 ```bash
-npm install
-npm run build -w shared
+bun install
+bun run --filter @game/shared build
 ```
 
 ## Run (development)
 Start server and client in separate terminals:
 ```bash
-npm run dev:server   # ws/http server on :3001
-npm run dev:client   # vite dev server on :5173
+bun run dev:server   # ws/http server on :3001
+bun run dev:client   # vite dev server on :5173
 ```
 Open http://localhost:5173, create a room, and share the code to join (up to 8 players).
 

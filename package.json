@@ -3,8 +3,8 @@
   "private": true,
   "workspaces": ["shared", "server", "client"],
   "scripts": {
-    "dev:server": "npm run dev -w server",
-    "dev:client": "npm run dev -w client",
-    "build": "npm run build -w shared && npm run build -w client && npm run build -w server"
+    "dev:server": "bun run --filter @game/server dev",
+    "dev:client": "bun run --filter @game/client dev",
+    "build": "bun run --filter @game/shared build && bun run --filter @game/client build && bun run --filter @game/server build"
   }
 }
