@@ -36,6 +36,8 @@ interface Room {
   hostId: number;
   players: RoomPlayer[];
   state: GameState;
+  turnStartedAt?: number;
+  timeoutId?: ReturnType<typeof setTimeout>;
 }
 
 const rooms = new Map<string, Room>();
@@ -57,6 +59,36 @@ function broadcast(room: Room, msg: ServerMsg) {
   for (const p of room.players) {
     if (p.connected) send(p.ws, msg);
   }
+}
+
+function nextAliveIndex(state: GameState, fromIndex: number): number {
+  const n = state.players.length;
+  for (let i = 1; i <= n; i++) {
+    const idx = (fromIndex + i) % n;
+    if (state.players[idx].alive) return idx;
+  }
+  return fromIndex;
+}
+
+function clearTurnTimer(room: Room) {
+  if (room.timeoutId) {
+    clearTimeout(room.timeoutId);
+    room.timeoutId = undefined;
+  }
+}
+
+function scheduleTurnTimer(room: Room) {
+  clearTurnTimer(room);
+  if (room.state.status !== 'playing') return;
+  room.turnStartedAt = Date.now();
+  room.timeoutId = setTimeout(() => {
+    if (room.state.status !== 'playing') return;
+    const from = room.state.currentPlayerIndex;
+    const next = nextAliveIndex(room.state, from);
+    room.state = { ...room.state, currentPlayerIndex: next, turnCount: room.state.turnCount + 1 };
+    broadcast(room, { type: 'state', state: room.state });
+    scheduleTurnTimer(room);
+  }, 15000);
 }
 
 function publicPlayers(room: Room) {
@@ -162,6 +194,7 @@ app.get(
           if (room.players.length < 2) return send(ws, { type: 'error', message: 'Need at least 2 players' });
           room.state = createGame(room.players.map((p) => ({ name: p.name })));
           broadcast(room, { type: 'state', state: room.state });
+          scheduleTurnTimer(room);
           return;
         }
 
@@ -170,6 +203,7 @@ app.get(
           if (!result.ok || !result.state) return send(ws, { type: 'error', message: result.error || 'Invalid move' });
           room.state = result.state;
           broadcast(room, { type: 'state', state: room.state, explosions: result.explosions });
+          scheduleTurnTimer(room);
           return;
         }
 
@@ -178,6 +212,7 @@ app.get(
           if (room.players.length < 2) return send(ws, { type: 'error', message: 'Need at least 2 players' });
           room.state = createGame(room.players.map((p) => ({ name: p.name })));
           broadcast(room, { type: 'state', state: room.state });
+          scheduleTurnTimer(room);
           return;
         }
       },
@@ -186,10 +221,10 @@ app.get(
         const room = currentRoom;
         const p = room.players.find((x) => x.id === playerId);
         if (p) p.connected = false;
-        // if in lobby, remove player; if playing, keep slot but mark disconnected (simple handling)
+        // if in lobby, remove player
         if (room.state.status === 'waiting') {
+          clearTurnTimer(room);
           room.players = room.players.filter((x) => x.id !== playerId);
-          // reassign ids/colors/host
           room.players.forEach((pl, i) => {
             pl.id = i;
             pl.color = PLAYER_COLORS[i];
@@ -201,8 +236,33 @@ app.get(
           }
           room.state = lobbyState(room);
           for (const pl of room.players) send(pl.ws, roomPayload(room, pl.id));
+        } else if (room.state.status === 'playing') {
+          // remove leaver's pieces and mark not alive
+          const leaverId = playerId;
+          const board = room.state.board.map(row => row.map(cell => cell.owner === leaverId ? { owner: null, count: 0 } : { ...cell }));
+          const players = room.state.players.map(pl => pl.id === leaverId ? { ...pl, alive: false } : { ...pl });
+          const alivePlayers = players.filter(pl => pl.alive);
+          let nextState: GameState = { ...room.state, board, players };
+          const connectedAlive = alivePlayers.filter(pl => room.players.find(rp => rp.id === pl.id)?.connected);
+          if (room.state.players.length <= 2 || alivePlayers.length <= 1 || connectedAlive.length <= 1) {
+            // end game
+            const winner = alivePlayers.find(pl => room.players.find(rp => rp.id === pl.id)?.connected)?.id ?? (alivePlayers[0]?.id ?? null);
+            nextState = { ...nextState, status: 'finished', winner };
+            clearTurnTimer(room);
+          } else {
+            // if it was leaver's turn, advance
+            if (room.state.players[room.state.currentPlayerIndex]?.id === leaverId) {
+              nextState.currentPlayerIndex = nextAliveIndex(nextState, room.state.currentPlayerIndex);
+            }
+            // if current index now points to dead, fix
+            if (!nextState.players[nextState.currentPlayerIndex]?.alive) {
+              nextState.currentPlayerIndex = nextAliveIndex(nextState, nextState.currentPlayerIndex);
+            }
+          }
+          room.state = nextState;
+          broadcast(room, { type: 'state', state: room.state });
+          scheduleTurnTimer(room);
         } else {
-          // notify others by rebroadcasting state (players list still same ids in state; connection implicit)
           broadcast(room, { type: 'state', state: room.state });
         }
       },
