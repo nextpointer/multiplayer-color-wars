@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+@theme {
+  --animate-pop: pop 0.25s ease-out;
+  --animate-pulse-glow: pulse-glow 1.4s ease-in-out infinite;
+  --animate-burst: burst 0.35s ease-out;
+  --animate-fade-in: fade-in 0.3s ease-out;
+  --animate-slide-up: slide-up 0.35s ease-out;
+  @keyframes pop {
+    0% { transform: scale(0.2); opacity: 0.4; }
+    70% { transform: scale(1.25); }
+    100% { transform: scale(1); opacity: 1; }
+  }
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.0); filter: brightness(1); }
+    50% { box-shadow: 0 0 12px 2px var(--glow, rgba(255,255,255,0.35)); filter: brightness(1.15); }
+  }
+  @keyframes burst {
+    0% { transform: scale(0.6); opacity: 1; filter: brightness(1.8); }
+    100% { transform: scale(1.6); opacity: 0; filter: brightness(1); }
+  }
+  @keyframes fade-in {
+    from { opacity: 0; } to { opacity: 1; }
+  }
+  @keyframes slide-up {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+}
+
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+}
+
+.cell-transition {
+  transition: background-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+}
