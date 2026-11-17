@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "build": "bunx tsc -p tsconfig.json",
-    "start": "bun src/index.ts"
+    "start": "bun src/index.ts",
+    "cf:dev": "bunx wrangler dev",
+    "cf:deploy": "bunx wrangler deploy"
   },
   "dependencies": {
     "@game/shared": "1.0.0",
@@ -16,7 +18,9 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260301.0",
     "@types/ws": "^8.5.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "wrangler": "^4.0.0"
   }
 }

@@ -13,5 +13,6 @@
       "@game/shared": ["../shared/src/index.ts"]
     }
   },
-  "include": ["src", "../shared/src"]
+  "include": ["src", "../shared/src"],
+  "exclude": ["src/cf.ts", "src/RoomDO.ts"]
 }
