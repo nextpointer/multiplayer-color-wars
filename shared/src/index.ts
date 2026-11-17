@@ -141,8 +141,9 @@ export function applyMove(state: GameState, playerId: PlayerId, r: number, c: nu
   const players = state.players.map((p) => ({ ...p }));
   const explosions: ExplosionStep[] = [];
 
-  // place orb
-  board[r][c] = { owner: playerId, count: board[r][c].count + 1 };
+  // custom rule: cells start with 3 dots; a move increments dot count
+  const baseCount = cell.count === 0 ? 2 : cell.count;
+  board[r][c] = { owner: playerId, count: baseCount + 1 };
   players[state.currentPlayerIndex].hasPlayed = true;
 
   // resolve chain reactions
