@@ -1,260 +1,359 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { criticalMass, type GameState } from '@game/shared';
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { MotionConfig } from "motion/react";
+import { criticalMass, type Cell as GCell, type GameState } from "@game/shared";
+import { SettingsProvider, useSettings } from "./state/settings";
+import { ToastProvider, useToast } from "./design/Toast";
+import { Modal } from "./design/Modal";
+import { PrimaryPillButton } from "./design/PrimaryPillButton";
+import { visualsForPlayer } from "./design/tokens";
+import { play, haptic, unlockOnGesture } from "./design/sound";
+import { deriveMovePlan, precomputeSnapshots, type MoveAnimationPlan } from "./engine/chainAdapter";
+import type { SvgFlightEngineHandle } from "./engine/svgFlight";
+import { HomeFlow } from "./screens/HomeFlow";
+import { LobbyScreen } from "./screens/LobbyScreen";
+import { GameScreen } from "./screens/GameScreen";
+import { ResultsScreen } from "./screens/ResultsScreen";
 
 type ServerMsg =
-  | { type: 'room'; roomId: string; playerId: number; players: { id: number; name: string; color: string }[]; hostId: number; state: GameState }
-  | { type: 'state'; state: GameState; explosions?: { r: number; c: number; owner: number }[] }
-  | { type: 'error'; message: string };
+  | { type: "room"; roomId: string; playerId: number; players: { id: number; name: string; color: string }[]; hostId: number; state: GameState }
+  | { type: "state"; state: GameState; explosions?: { r: number; c: number; owner: number }[] }
+  | { type: "error"; message: string };
 
 function wsUrl() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const host = import.meta.env.VITE_WS_URL || `${proto}//${location.hostname}:3001`;
-  return host.endsWith('/ws') ? host : `${host.replace(/\/$/, '')}/ws`;
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const host = (import.meta as any).env.VITE_WS_URL || `${proto}//${location.hostname}:3001`;
+  return host.endsWith("/ws") ? host : `${host.replace(/\/$/, "")}/ws`;
 }
 
-export default function App() {
+function seatOfPlayer(p?: { id: number; color: string } | null) {
+  if (!p) return visualsForPlayer("#00C2EE", 0);
+  return visualsForPlayer(p.color, p.id);
+}
+
+function cloneBoard(board: GCell[][]): GCell[][] {
+  return board.map(row => row.map(c => ({ owner: c.owner, count: c.count })));
+}
+
+function AppInner() {
+  const { settings, setMuted, setHaptics, setChainSpeed, setTurnTimer } = useSettings();
+  const { show: toast } = useToast();
+
   const [connected, setConnected] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [name, setName] = useState('');
-  const [joinCode, setJoinCode] = useState('');
+  const [disconnectedNotice, setDisconnectedNotice] = useState(false);
+  const [name, setName] = useState(() => localStorage.getItem("cw.name") || "");
+  const [joinCode, setJoinCode] = useState("");
   const [roomId, setRoomId] = useState<string | null>(null);
   const [playerId, setPlayerId] = useState<number | null>(null);
   const [hostId, setHostId] = useState<number | null>(null);
   const [lobbyPlayers, setLobbyPlayers] = useState<{ id: number; name: string; color: string }[]>([]);
-  const [state, setState] = useState<GameState | null>(null);
-  const [burstKey, setBurstKey] = useState(0);
-  const [burstCells, setBurstCells] = useState<Set<string>>(new Set());
+  const [serverState, setServerState] = useState<GameState | null>(null);
+  const [displayState, setDisplayState] = useState<GameState | null>(null);
+  const [homeView, setHomeView] = useState<"landing" | "howto" | "create" | "join">("landing");
+  const [showSettings, setShowSettings] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [showQuit, setShowQuit] = useState(false);
+  const [chainLocked, setChainLocked] = useState(false);
+  const [flashCells, setFlashCells] = useState<Set<string>>(new Set());
+  const [nudgeKey, setNudgeKey] = useState(0);
+  const [bumpKeys, setBumpKeys] = useState<Record<number, number>>({});
+  const [turnSecondsLeft, setTurnSecondsLeft] = useState(15);
+
   const wsRef = useRef<WebSocket | null>(null);
+  const flightRef = useRef<SvgFlightEngineHandle | null>(null);
+  const preMoveStateRef = useRef<GameState | null>(null);
+  const pendingMoveRef = useRef<{ r: number; c: number } | null>(null);
+  const prevTurnRef = useRef<number | null>(null);
+  const displayStateRef = useRef<GameState | null>(null);
+  const serverStateRef = useRef<GameState | null>(null);
+
+  useEffect(() => { displayStateRef.current = displayState; }, [displayState]);
+  useEffect(() => { serverStateRef.current = serverState; }, [serverState]);
+  useEffect(() => { unlockOnGesture(); }, []);
+
+  const send = useCallback((obj: any) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+  }, []);
+
+  const playMoveAnimation = useCallback(async (_pre: GameState, _plan: MoveAnimationPlan, nextState: GameState) => {
+    // No explosion/move animation: apply authoritative result immediately.
+    setDisplayState(nextState);
+    preMoveStateRef.current = nextState;
+    setChainLocked(false);
+  }, []);
 
   useEffect(() => {
     const ws = new WebSocket(wsUrl());
     wsRef.current = ws;
-    ws.onopen = () => { setConnected(true); setError(null); };
-    ws.onclose = () => { setConnected(false); };
-    ws.onerror = () => { setError('Connection error. Is the server running?'); };
+    ws.onopen = () => { setConnected(true); setDisconnectedNotice(false); };
+    ws.onclose = () => { setConnected(false); setDisconnectedNotice(true); };
+    ws.onerror = () => { setDisconnectedNotice(true); toast("Connection error. Reconnecting…"); void play("error.thud"); };
     ws.onmessage = (ev) => {
       let msg: ServerMsg;
       try { msg = JSON.parse(ev.data); } catch { return; }
-      if (msg.type === 'error') { setError(msg.message); setTimeout(() => setError(null), 3500); return; }
-      if (msg.type === 'room') {
+      if (msg.type === "error") {
+        toast(msg.message);
+        void play("error.thud");
+        pendingMoveRef.current = null;
+        preMoveStateRef.current = serverStateRef.current;
+        return;
+      }
+      if (msg.type === "room") {
         setRoomId(msg.roomId);
         setPlayerId(msg.playerId);
         setHostId(msg.hostId);
         setLobbyPlayers(msg.players);
-        setState(msg.state);
-        setError(null);
+        setServerState(msg.state);
+        setDisplayState(msg.state);
+        preMoveStateRef.current = msg.state;
+        prevTurnRef.current = msg.state.players[msg.state.currentPlayerIndex]?.id ?? null;
         return;
       }
-      if (msg.type === 'state') {
-        setState(msg.state);
-        if (msg.explosions && msg.explosions.length) {
-          setBurstCells(new Set(msg.explosions.map(e => `${e.r},${e.c}`)));
-          setBurstKey(k => k + 1);
-          setTimeout(() => setBurstCells(new Set()), 350);
+      if (msg.type === "state") {
+        const prev = preMoveStateRef.current || displayStateRef.current || serverStateRef.current;
+        setServerState(msg.state);
+        setLobbyPlayers(msg.state.players.map(p => ({ id: p.id, name: p.name, color: p.color })));
+        const pending = pendingMoveRef.current;
+        pendingMoveRef.current = null;
+
+        const boardsEqual = (a: GameState, b: GameState) => {
+          if (a.rows !== b.rows || a.cols !== b.cols) return false;
+          for (let r = 0; r < a.rows; r++) for (let c = 0; c < a.cols; c++) {
+            const ca = a.board[r][c], cb = b.board[r][c];
+            if (ca.owner !== cb.owner || ca.count !== cb.count) return false;
+          }
+          return true;
+        };
+
+        // Timeout/turn-skip or authoritative sync with unchanged board: apply immediately.
+        if (!msg.explosions?.length && prev && boardsEqual(prev, msg.state)) {
+          flightRef.current?.clear();
+          setDisplayState(msg.state);
+          preMoveStateRef.current = msg.state;
+          setChainLocked(false);
+          return;
+        }
+
+        const findMoveByDiff = (a: GameState, b: GameState) => {
+          for (let r = 0; r < a.rows; r++) for (let c = 0; c < a.cols; c++) {
+            const ca = a.board[r][c], cb = b.board[r][c];
+            if (cb.count === ca.count + 1 && (ca.owner === null || ca.owner === cb.owner)) {
+              if (!msg.explosions || msg.explosions.length === 0) return { r, c };
+            }
+          }
+          for (let r = 0; r < a.rows; r++) for (let c = 0; c < a.cols; c++) {
+            if (b.board[r][c].count > a.board[r][c].count) return { r, c };
+          }
+          return null;
+        };
+
+        if (prev) {
+          const moverId = prev.players[prev.currentPlayerIndex]?.id ?? 0;
+          let move = pending;
+          if (!move && msg.explosions && msg.explosions.length > 0) {
+            move = { r: msg.explosions[0].r, c: msg.explosions[0].c };
+          }
+          if (!move) {
+            move = findMoveByDiff(prev, msg.state);
+          }
+          if (!move) {
+            setDisplayState(msg.state);
+            preMoveStateRef.current = msg.state;
+            setChainLocked(false);
+            return;
+          }
+          const plan = deriveMovePlan({ rows: prev.rows, cols: prev.cols, preBoard: prev.board, playerId: moverId, r: move.r, c: move.c, explosions: msg.explosions || [] });
+          void playMoveAnimation(prev, plan, msg.state);
+        } else {
+          setDisplayState(msg.state);
+          preMoveStateRef.current = msg.state;
         }
         return;
       }
     };
     return () => ws.close();
+  }, []); // eslint-disable-line
+
+  // turn change sounds
+  useEffect(() => {
+    if (!serverState || serverState.status !== "playing") return;
+    const cur = serverState.players[serverState.currentPlayerIndex]?.id;
+    if (cur == null) return;
+    if (prevTurnRef.current != null && prevTurnRef.current !== cur) {
+      if (cur === playerId) { void play("turn.you", { playerKey: seatOfPlayer(serverState.players[serverState.currentPlayerIndex]).key }); if (settings.haptics) haptic("medium"); }
+      else { void play("turn.other"); }
+    }
+    prevTurnRef.current = cur;
+  }, [serverState?.currentPlayerIndex, serverState?.status, playerId, settings.haptics]);
+
+  // turn bg
+  const current = serverState?.players[serverState.currentPlayerIndex];
+  useEffect(() => {
+    const seat = seatOfPlayer(current);
+    document.documentElement.style.setProperty("--cw-turn-bg", seat.turnBg);
+  }, [current?.id, current?.color]);
+
+  const state = displayState || serverState;
+  const myTurn = !!serverState && serverState.status === "playing" && playerId != null && current?.id === playerId && !chainLocked;
+
+  useEffect(() => {
+    if (!serverState || serverState.status !== "playing" || !settings.turnTimer) { setTurnSecondsLeft(15); return; }
+    setTurnSecondsLeft(15);
+    const id = window.setInterval(() => {
+      setTurnSecondsLeft(s => (s > 0 ? s - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [serverState?.currentPlayerIndex, serverState?.status, serverState?.turnCount, settings.turnTimer, chainLocked]);
+
+  // When timer ends: server controls turns (no pass/skip protocol). Notify player if it's their turn.
+  useEffect(() => {
+    if (!settings.turnTimer || turnSecondsLeft !== 0) return;
+    if (serverState?.status === "playing" && myTurn) {
+      toast("Time's up");
+    }
+  }, [turnSecondsLeft, settings.turnTimer, myTurn, serverState?.status]);
+
+  const doCreate = () => {
+    if (!name.trim()) { toast("Enter your name"); return; }
+    localStorage.setItem("cw.name", name.trim());
+    void play("ui.tap"); if (settings.haptics) haptic("light");
+    send({ type: "create", name: name.trim() });
+  };
+  const doJoin = () => {
+    const code = joinCode.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+    if (code.length < 5) { toast("Enter the room code"); void play("error.thud"); return; }
+    if (!name.trim()) { toast("Enter your name"); return; }
+    localStorage.setItem("cw.name", name.trim());
+    void play("ui.tap");
+    send({ type: "join", roomId: code, name: name.trim() });
+  };
+
+  if (!roomId || !serverState || playerId == null) {
+    return (
+      <>
+        <HomeFlow
+          connected={connected} name={name} setName={setName} joinCode={joinCode} setJoinCode={setJoinCode}
+          view={homeView} setView={setHomeView}
+          onCreate={doCreate} onJoin={doJoin}
+          onOpenSettings={() => setShowSettings(true)} onOpenHelp={() => { setShowHelp(true); }}
+          showSettings={showSettings} setShowSettings={setShowSettings}
+        />
+        <Modal open={showHelp} onClose={() => setShowHelp(false)} title="How to play">
+          <div className="cw-body" style={{ whiteSpace: "pre-wrap" }}>
+            Try to occupy the whole field with your color. Tap your circles to grow them. When a circle reaches 4 white dots, it bursts and its dots fly into the neighbouring squares, capturing them. Last color standing wins!
+          </div>
+          <div style={{ marginTop: 16, display: "flex", justifyContent: "center" }}>
+            <PrimaryPillButton label="Got it" onClick={() => setShowHelp(false)} />
+          </div>
+        </Modal>
+      </>
+    );
+  }
+
+  if (serverState.status === "waiting") {
+    return (
+      <LobbyScreen
+        roomId={roomId} players={lobbyPlayers} hostId={hostId} playerId={playerId}
+        onStart={() => { void play("ui.tap"); send({ type: "start" }); }}
+        onBack={() => { window.location.reload(); }}
+        onOpenSettings={() => setShowSettings(true)}
+        showSettings={showSettings} setShowSettings={setShowSettings}
+        settings={settings} setMuted={setMuted} setHaptics={setHaptics} setChainSpeed={setChainSpeed} setTurnTimer={setTurnTimer}
+      />
+    );
+  }
+
+  return (
+    <>
+      {disconnectedNotice && (
+        <div style={{ position: "fixed", top: "calc(env(safe-area-inset-top) + 8px)", left: "50%", transform: "translateX(-50%)", zIndex: 70, background: "var(--cw-pill)", color: "#fff", padding: "8px 14px", borderRadius: 999, fontWeight: 700, fontSize: 14 }}>
+          Reconnecting…
+        </div>
+      )}
+      {state && (
+        <GameScreen
+          state={state} serverState={serverState} roomId={roomId} playerId={playerId} hostId={hostId}
+          myTurn={myTurn} chainLocked={chainLocked}
+          flightRef={flightRef}
+          flashCells={flashCells} nudgeKey={nudgeKey} bumpKeys={bumpKeys}
+          turnSecondsLeft={settings.turnTimer ? turnSecondsLeft : null}
+          onMove={(r, c) => {
+            if (!myTurn || chainLocked || !state) return;
+            const cell = state.board[r][c];
+            if (cell.owner !== null && cell.owner !== playerId) return;
+            void play("dot.add", { dotCount: Math.min(4, cell.count + 1) });
+            if (settings.haptics) haptic("light");
+            preMoveStateRef.current = state;
+            pendingMoveRef.current = { r, c };
+            send({ type: "move", r, c });
+          }}
+          onQuit={() => setShowQuit(true)}
+          settings={settings}
+        />
+      )}
+      {serverState.status === "finished" && (
+        <ResultsScreen
+          state={serverState} playerId={playerId} hostId={hostId}
+          onRematch={() => { void play("ui.tap"); send({ type: "rematch" }); }}
+          onLobby={() => window.location.reload()}
+        />
+      )}
+      <Modal open={showQuit} onClose={() => setShowQuit(false)} title="Leave the match?">
+        <div className="cw-body" style={{ color: "var(--cw-ink-soft)", marginBottom: 16 }}>You'll give up your cells.</div>
+        <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+          <button onClick={() => setShowQuit(false)} style={{ height: 48, padding: "0 24px", borderRadius: 999, border: "3px dashed var(--cw-ink-soft)", background: "transparent", color: "var(--cw-ink)", fontWeight: 700 }}>Stay</button>
+          <PrimaryPillButton label="Leave" onClick={() => { setShowQuit(false); window.location.reload(); }} />
+        </div>
+      </Modal>
+    </>
+  );
+}
+
+function PhoneLandscape({ children }: { children: React.ReactNode }) {
+  const [force, setForce] = useState(() => window.innerWidth < window.innerHeight && window.innerWidth < 900);
+  const [dims, setDims] = useState(() => ({ w: window.innerHeight, h: window.innerWidth }));
+  useEffect(() => {
+    const on = () => {
+      const f = window.innerWidth < window.innerHeight && window.innerWidth < 900;
+      setForce(f);
+      setDims({ w: window.innerHeight, h: window.innerWidth });
+    };
+    on();
+    window.addEventListener("resize", on);
+    window.addEventListener("orientationchange", on);
+    return () => { window.removeEventListener("resize", on); window.removeEventListener("orientationchange", on); };
   }, []);
-
-  function send(obj: any) {
-    const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
-  }
-
-  const myTurn = !!state && state.status === 'playing' && playerId != null && state.players[state.currentPlayerIndex]?.id === playerId;
-  const me = state?.players.find(p => p.id === playerId);
-
-  if (!roomId || !state || playerId == null) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-100 via-slate-50 to-indigo-100 text-slate-900 dark:from-slate-950 dark:via-slate-900 dark:to-indigo-950 dark:text-slate-100 flex items-center justify-center p-4">
-        <div className="w-full max-w-md animate-fade-in">
-          <div className="bg-white/80 dark:bg-slate-900/70 backdrop-blur rounded-2xl shadow-xl border border-slate-200/70 dark:border-slate-700/60 p-6 sm:p-8">
-            <div className="flex items-center justify-between mb-2">
-              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Color Wars</h1>
-              <span className={`text-xs px-2 py-1 rounded-full ${connected ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300'}`}>
-                {connected ? 'Connected' : 'Disconnected'}
-              </span>
-            </div>
-            <p className="text-sm text-slate-600 dark:text-slate-400 mb-6">Chain Reaction multiplayer · 2–8 players · standard rules</p>
-            <label className="block text-sm font-medium mb-1">Your name</label>
-            <input value={name} onChange={e => setName(e.target.value)} placeholder="Enter a name" maxLength={20}
-              className="w-full mb-4 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2.5 outline-none focus:ring-2 focus:ring-indigo-500" />
-            <button onClick={() => send({ type: 'create', name: name || 'Player' })} disabled={!connected}
-              className="w-full rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold py-2.5 transition shadow-lg shadow-indigo-600/20">Create Game</button>
-            <div className="flex items-center gap-3 my-4 text-xs text-slate-500"><div className="h-px flex-1 bg-slate-300 dark:bg-slate-700" />or join<div className="h-px flex-1 bg-slate-300 dark:bg-slate-700" /></div>
-            <div className="flex gap-2">
-              <input value={joinCode} onChange={e => setJoinCode(e.target.value.toUpperCase())} placeholder="ROOM CODE" maxLength={6}
-                className="flex-1 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2.5 uppercase tracking-widest outline-none focus:ring-2 focus:ring-indigo-500" />
-              <button onClick={() => send({ type: 'join', roomId: joinCode, name: name || 'Player' })} disabled={!connected || !joinCode.trim()}
-                className="rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white dark:text-slate-900 text-white font-semibold px-4 transition">Join</button>
-            </div>
-            {error && <div className="mt-4 text-sm rounded-lg bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300 px-3 py-2 animate-slide-up">{error}</div>}
-          </div>
-          <ul className="mt-4 text-xs text-slate-600 dark:text-slate-400 space-y-1 px-1">
-            <li>• Place an orb in an empty cell or one you own.</li>
-            <li>• Critical mass: corners 2, edges 3, middle 4 — then it explodes to neighbors and captures them.</li>
-            <li>• Chain reactions happen automatically. Last player with orbs wins.</li>
-          </ul>
-        </div>
-      </div>
-    );
-  }
-
-  if (state.status === 'waiting') {
-    const isHost = hostId === playerId;
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-100 via-slate-50 to-indigo-100 text-slate-900 dark:from-slate-950 dark:via-slate-900 dark:to-indigo-950 dark:text-slate-100 flex items-center justify-center p-4">
-        <div className="w-full max-w-lg bg-white/80 dark:bg-slate-900/70 backdrop-blur rounded-2xl shadow-xl border border-slate-200/70 dark:border-slate-700/60 p-6 sm:p-8 animate-fade-in">
-          <h2 className="text-xl font-bold mb-1">Waiting Room</h2>
-          <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">Share this code with friends (up to 8 players)</p>
-          <div className="flex items-center gap-3 mb-6">
-            <div className="flex-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-4 py-3 text-center text-2xl font-mono tracking-[0.3em] font-bold">{roomId}</div>
-            <button onClick={() => navigator.clipboard.writeText(roomId)} className="rounded-xl px-3 py-3 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold transition">Copy</button>
-          </div>
-          <div className="space-y-2 mb-6">
-            {lobbyPlayers.map(p => (
-              <div key={p.id} className="flex items-center gap-3 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-2.5 bg-white/60 dark:bg-slate-800/40">
-                <span className="h-3.5 w-3.5 rounded-full shadow" style={{ background: p.color }} />
-                <span className="font-medium flex-1">{p.name}{p.id === playerId ? ' (you)' : ''}</span>
-                {p.id === hostId && <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">Host</span>}
-              </div>
-            ))}
-          </div>
-          {isHost ? (
-            <button onClick={() => send({ type: 'start' })} disabled={lobbyPlayers.length < 2}
-              className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold py-2.5 transition shadow-lg shadow-emerald-600/20">
-              {lobbyPlayers.length < 2 ? 'Need at least 2 players' : `Start Game (${lobbyPlayers.length} players)`}
-            </button>
-          ) : (
-            <div className="text-center text-sm text-slate-600 dark:text-slate-400 py-2">Waiting for host to start…</div>
-          )}
-          {error && <div className="mt-4 text-sm rounded-lg bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300 px-3 py-2">{error}</div>}
-        </div>
-      </div>
-    );
-  }
-
-  const current = state.players[state.currentPlayerIndex];
+  if (!force) return <>{children}</>;
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-slate-50 to-indigo-100 text-slate-900 dark:from-slate-950 dark:via-slate-900 dark:to-indigo-950 dark:text-slate-100 p-3 sm:p-5">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-          <div>
-            <h1 className="text-lg sm:text-xl font-bold">Color Wars <span className="text-slate-400 font-normal text-sm ml-1">#{roomId}</span></h1>
-            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">
-              {state.status === 'finished' ? `Game over` : myTurn ? "Your turn — tap a glowing cell" : `${current?.name}'s turn`}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 text-xs">
-            <span className="px-2 py-1 rounded-full bg-slate-200/70 dark:bg-slate-800">{state.rows}×{state.cols}</span>
-            <span className="px-2 py-1 rounded-full bg-slate-200/70 dark:bg-slate-800">{state.players.length} players</span>
-          </div>
-        </div>
-        {error && <div className="mb-3 text-sm rounded-lg bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300 px-3 py-2 animate-slide-up">{error}</div>}
-
-        <div className="grid lg:grid-cols-[220px_1fr_220px] gap-3 sm:gap-4 items-start">
-          <div className="space-y-2 order-2 lg:order-1">
-            {state.players.slice(0, Math.ceil(state.players.length / 2)).map(p => <PlayerCard key={p.id} p={p} active={p.id === current?.id} me={p.id === playerId} state={state} />)}
-          </div>
-
-          <div className="order-1 lg:order-2 flex justify-center">
-            <Board state={state} myId={playerId} myTurn={myTurn} burstCells={burstCells} burstKey={burstKey} onMove={(r,c) => send({ type: 'move', r, c })} />
-          </div>
-
-          <div className="space-y-2 order-3">
-            {state.players.slice(Math.ceil(state.players.length / 2)).map(p => <PlayerCard key={p.id} p={p} active={p.id === current?.id} me={p.id === playerId} state={state} />)}
-          </div>
-        </div>
-
-        {state.status === 'finished' && (
-          <div className="fixed inset-0 bg-slate-950/50 backdrop-blur-sm flex items-center justify-center p-4 z-20 animate-fade-in">
-            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 p-6 sm:p-8 w-full max-w-sm text-center animate-slide-up">
-              <div className="text-sm uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1">Winner</div>
-              <div className="text-3xl font-extrabold mb-1" style={{ color: state.players.find(p => p.id === state.winner)?.color }}>
-                {state.players.find(p => p.id === state.winner)?.name || 'Nobody'}
-              </div>
-              <p className="text-slate-600 dark:text-slate-400 mb-6">dominates the board!</p>
-              {hostId === playerId ? (
-                <button onClick={() => send({ type: 'rematch' })} className="w-full rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2.5 transition">Rematch</button>
-              ) : (
-                <div className="text-sm text-slate-500">Waiting for host to start a rematch…</div>
-              )}
-            </div>
-          </div>
-        )}
+    <div style={{ position: "fixed", inset: 0, overflow: "hidden", background: "var(--cw-turn-bg, #E7F4FC)" }}>
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: "100%",
+          width: dims.w,
+          height: dims.h,
+          transform: "rotate(90deg)",
+          transformOrigin: "top left",
+          overflow: "hidden",
+        }}
+      >
+        {children}
       </div>
     </div>
   );
 }
 
-function orbTotal(state: GameState, pid: number) {
-  let n = 0;
-  for (const row of state.board) for (const cell of row) if (cell.owner === pid) n += cell.count;
-  return n;
-}
-
-function PlayerCard({ p, active, me, state }: { p: any; active: boolean; me: boolean; state: GameState }) {
-  const total = orbTotal(state, p.id);
+export default function App() {
   return (
-    <div className={`rounded-xl border px-3 py-2.5 flex items-center gap-3 transition cell-transition ${active ? 'ring-2 shadow-lg' : ''} ${!p.alive ? 'opacity-45 grayscale' : ''} bg-white/70 dark:bg-slate-900/60 border-slate-200 dark:border-slate-700`}
-      style={active ? { ['--tw-ring-color' as any]: p.color, boxShadow: `0 0 0 2px ${p.color}33, 0 10px 20px -10px ${p.color}66` } : undefined}>
-      <span className="h-4 w-4 rounded-full shadow-inner flex-shrink-0" style={{ background: p.color }} />
-      <div className="min-w-0 flex-1">
-        <div className="font-semibold truncate text-sm">{p.name}{me ? ' (you)' : ''}</div>
-        <div className="text-xs text-slate-500 dark:text-slate-400">{!p.alive ? 'Eliminated' : `${total} orbs`}</div>
-      </div>
-      {active && p.alive && <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color: p.color }}>Turn</span>}
-    </div>
-  );
-}
-
-function Board({ state, myId, myTurn, burstCells, burstKey, onMove }: { state: GameState; myId: number; myTurn: boolean; burstCells: Set<string>; burstKey: number; onMove: (r:number,c:number)=>void }) {
-  const maxDim = Math.max(state.rows, state.cols);
-  const size = maxDim <= 9 ? 'min(2.6rem, 9vw)' : maxDim <= 12 ? 'min(2.2rem, 7.5vw)' : 'min(1.9rem, 6.2vw)';
-  return (
-    <div className="inline-block rounded-2xl p-2 sm:p-3 bg-white/70 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-700/70 shadow-xl backdrop-blur">
-      <div className="grid gap-1 sm:gap-1.5" style={{ gridTemplateColumns: `repeat(${state.cols}, ${size})` }}>
-        {state.board.map((row, r) => row.map((cell, c) => {
-          const crit = criticalMass(state.rows, state.cols, r, c);
-          const playable = myTurn && (cell.owner === null || cell.owner === myId);
-          const owner = cell.owner != null ? state.players[cell.owner] : null;
-          const danger = cell.count === crit - 1 && cell.owner != null;
-          const bursting = burstCells.has(`${r},${c}`);
-          return (
-            <button key={`${r}-${c}`} onClick={() => playable && onMove(r, c)} disabled={!playable}
-              className={`relative aspect-square rounded-lg sm:rounded-xl border flex items-center justify-center cell-transition overflow-hidden
-                ${playable ? 'cursor-pointer hover:scale-[1.04] hover:brightness-110' : 'cursor-default'}
-                ${!owner ? 'bg-slate-100/80 dark:bg-slate-800/70 border-slate-200 dark:border-slate-700' : 'border-transparent'}`}
-              style={owner ? { background: `${owner.color}22`, boxShadow: danger ? `inset 0 0 0 1px ${owner.color}88, 0 0 10px ${owner.color}33` : `inset 0 0 0 1px ${owner.color}55` } : undefined}
-            >
-              {bursting && <span key={burstKey} className="absolute inset-0 rounded-lg sm:rounded-xl animate-burst" style={{ background: owner?.color || currentColor(state) }} />}
-              {danger && owner && <span className="absolute inset-0 rounded-lg sm:rounded-xl animate-pulse-glow" style={{ ['--glow' as any]: `${owner.color}66` }} />}
-              {cell.count > 0 && owner && <Orbs count={cell.count} color={owner.color} />}
-              {playable && !owner && <span className="h-1.5 w-1.5 rounded-full bg-slate-300 dark:bg-slate-600 opacity-70" />}
-            </button>
-          );
-        }))}
-      </div>
-    </div>
-  );
-}
-
-function currentColor(state: GameState) { return state.players[state.currentPlayerIndex]?.color || '#888'; }
-
-function Orbs({ count, color }: { count: number; color: string }) {
-  const show = Math.min(count, 3);
-  const dots = Array.from({ length: show });
-  return (
-    <div className="relative flex items-center justify-center w-full h-full">
-      <div className={`flex items-center justify-center ${show === 1 ? '' : 'gap-[2px] sm:gap-1'}`}>
-        {dots.map((_, i) => (
-          <span key={i} className="block rounded-full animate-pop shadow"
-            style={{ width: show === 1 ? '38%' : '26%', aspectRatio: '1', background: `radial-gradient(circle at 30% 30%, #fff8, ${color})`, boxShadow: `0 0 6px ${color}99` }} />
-        ))}
-      </div>
-      {count > 3 && <span className="absolute bottom-0.5 right-1 text-[9px] sm:text-[10px] font-bold" style={{ color }}>{count}</span>}
-    </div>
+    <MotionConfig reducedMotion="user">
+      <SettingsProvider>
+        <ToastProvider>
+          <PhoneLandscape>
+            <AppInner />
+          </PhoneLandscape>
+        </ToastProvider>
+      </SettingsProvider>
+    </MotionConfig>
   );
 }

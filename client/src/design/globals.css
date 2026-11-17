@@ -1,0 +1,82 @@
+:root {
+  --cw-cell: #FCEDD0;
+  --cw-cell-flash: #FDF6E6;
+  --cw-ink: #2A2E39;
+  --cw-ink-soft: #5C6270;
+  --cw-pill: #2F333E;
+  --cw-outline: #1E242B;
+  --cw-plum: #42324C;
+  --cw-plum-pattern: #5A4E63;
+  --cw-azure: #E7F4FC;
+  --cw-cloud: #FFFFFF;
+  --cw-action: #00C2EE;
+  --cw-action-press: #00A9D6;
+  --cw-help: #3A4477;
+  --cw-white-text: #FFFFFF;
+  --cw-turn-bg: #60ACD2;
+  --cell: 48px;
+  --piece: 37px;
+  --dot: 6px;
+  --gap: 5px;
+  color-scheme: light;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "Baloo 2", Fredoka, Nunito, system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--cw-turn-bg);
+  color: var(--cw-ink);
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+* { box-sizing: border-box; }
+
+.cw-game-surface {
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.cw-no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.cw-no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.cw-page-shell {
+  min-height: 100%;
+  height: 100%;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+.cw-truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Typography */
+.cw-display {
+  font-size: clamp(34px, 8vw, 44px);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: -0.005em;
+  line-height: 1;
+}
+.cw-h1 { font-size: clamp(26px, 6vw, 32px); font-weight: 800; line-height: 1.1; }
+.cw-h2 { font-size: clamp(20px, 5vw, 24px); font-weight: 700; line-height: 1.15; }
+.cw-body { font-size: clamp(15px, 4vw, 17px); font-weight: 600; line-height: 1.35; }
+.cw-body-on-plum { font-size: clamp(16px, 4.5vw, 19px); font-weight: 700; color: var(--cw-white-text); text-align: center; line-height: 1.35; }
+.cw-caption { font-size: 13px; font-weight: 600; color: var(--cw-ink-soft); }
+.cw-score { font-size: clamp(18px, 5.5vw, 26px); font-weight: 800; line-height: 1; }
+.cw-fan-label { font-size: clamp(22px, 7vw, 30px); font-weight: 800; color: var(--cw-white-text); }
+
+button, input { font-family: inherit; }
+input { -webkit-appearance: none; appearance: none; }

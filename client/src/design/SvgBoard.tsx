@@ -1,0 +1,91 @@
+import React from "react";
+import type { GameState } from "@game/shared";
+import { visualsForPlayer, cellHighlight } from "./tokens";
+import { SLOTS, PIECE_R_F, DOT_R_F } from "../engine/geometry";
+import { SvgFlightEngine, type SvgFlightEngineHandle } from "../engine/svgFlight";
+
+function centerOf(r: number, c: number, cell: number, gap: number) {
+  return { x: c * (cell + gap) + cell / 2, y: r * (cell + gap) + cell / 2 };
+}
+
+function PieceDots({ cx, cy, cell, count, ghosted }: { cx: number; cy: number; cell: number; count: number; ghosted: boolean }) {
+  const n = Math.max(0, Math.min(4, count));
+  const dotR = DOT_R_F * cell;
+  if (n === 0) return null;
+  const slots = SLOTS[n as 1 | 2 | 3 | 4];
+  return (
+    <g opacity={ghosted ? 0.35 : 1}>
+      {slots.slice(0, n).map((s, i) => (
+        <circle key={i} cx={cx + s.x * cell} cy={cy + s.y * cell} r={dotR} fill="#FFFFFF" />
+      ))}
+    </g>
+  );
+}
+
+export function SvgBoard(props: {
+  state: GameState;
+  playerId: number;
+  metrics: { cell: number; gap: number; piece: number; dot: number };
+  myTurn: boolean;
+  chainLocked: boolean;
+  onMove: (r: number, c: number) => void;
+  flightRef: React.RefObject<SvgFlightEngineHandle>;
+}) {
+  const { state, playerId, metrics, myTurn, chainLocked, onMove, flightRef } = props;
+  const boardW = state.cols * metrics.cell + Math.max(0, state.cols - 1) * metrics.gap;
+  const boardH = state.rows * metrics.cell + Math.max(0, state.rows - 1) * metrics.gap;
+
+  return (
+    <svg
+      width={boardW}
+      height={boardH}
+      viewBox={`0 0 ${boardW} ${boardH}`}
+      style={{ overflow: "visible", display: "block", touchAction: "manipulation" }}
+      shapeRendering="geometricPrecision"
+    >
+      <defs>
+        <filter id="blur-soft" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="2" />
+        </filter>
+        <filter id="blur-heavy" x="-80%" y="-80%" width="260%" height="260%">
+          <feGaussianBlur stdDeviation="5" />
+        </filter>
+      </defs>
+      <g>
+        {Array.from({ length: state.rows }).map((_, r) =>
+          Array.from({ length: state.cols }).map((__, c) => {
+            const cell = state.board[r][c];
+            const { x, y } = centerOf(r, c, metrics.cell, metrics.gap);
+            const owner = cell.owner != null ? state.players[cell.owner] : null;
+            const seat = owner ? visualsForPlayer(owner.color, owner.id) : null;
+            const playable = myTurn && !chainLocked && (cell.owner === null || cell.owner === playerId);
+            const fill = seat ? cellHighlight(seat.base) : "var(--cw-cell, #FCEDD0)";
+            return (
+              <g key={`c-${r}-${c}`} onClick={() => playable && onMove(r, c)} style={{ cursor: playable ? "pointer" : "default" }}>
+                <rect
+                  x={c * (metrics.cell + metrics.gap)}
+                  y={r * (metrics.cell + metrics.gap)}
+                  width={metrics.cell}
+                  height={metrics.cell}
+                  rx={metrics.cell * 0.24}
+                  fill={fill}
+                  style={{ transition: "fill 350ms ease" }}
+                />
+                {cell.count > 0 && owner && seat && (
+                  <g>
+                    <circle cx={x} cy={y} r={PIECE_R_F * metrics.cell} fill={seat.base} opacity={!owner.alive ? 0.35 : 1} />
+                    {cell.count === 3 && (
+                      <circle cx={x} cy={y} r={PIECE_R_F * metrics.cell * 1.1} fill="none" stroke={seat.base} strokeWidth={2} opacity={!owner.alive ? 0.25 : 0.8} />
+                    )}
+                    <PieceDots cx={x} cy={y} cell={metrics.cell} count={cell.count} ghosted={!owner.alive} />
+                  </g>
+                )}
+              </g>
+            );
+          })
+        )}
+      </g>
+      <SvgFlightEngine ref={flightRef} />
+    </svg>
+  );
+}
