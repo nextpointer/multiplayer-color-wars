@@ -67,12 +67,14 @@ export function IconButton({ variant, icon, onClick, ariaLabel, style, disabled 
   const reduce = useReducedMotion();
   let bg = "var(--cw-cloud)";
   let stroke = "var(--cw-ink)";
+  let border = "none";
   if (variant === "navy") {
     bg = "var(--cw-pill)";
     stroke = "#FFFFFF";
   } else if (variant === "ghost") {
-    bg = "transparent";
-    stroke = "#FFFFFF";
+    bg = "rgba(255,255,255,0.55)";
+    stroke = "var(--cw-ink)";
+    border = "2px solid rgba(42,46,57,0.12)";
   }
   return (
     <motion.button
@@ -92,7 +94,7 @@ export function IconButton({ variant, icon, onClick, ariaLabel, style, disabled 
         height: 56,
         borderRadius: "50%",
         background: bg,
-        border: variant === "ghost" ? "2px solid rgba(255,255,255,0.4)" : "none",
+        border,
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",

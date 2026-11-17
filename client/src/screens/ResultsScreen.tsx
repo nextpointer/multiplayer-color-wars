@@ -27,41 +27,41 @@ export function ResultsScreen(props: {
   }, [playerId, state.winner]);
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 50, background: winSeat.turnBg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, overflow: "hidden" }}>
+    <div className="cw-no-scrollbar" style={{ position: "fixed", inset: 0, zIndex: 50, background: winSeat.turnBg, overflowY: "auto", overflowX: "hidden", WebkitOverflowScrolling: "touch", padding: "max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom))" }}>
       <CloudField />
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} style={{ position: "relative", zIndex: 1, textAlign: "center", width: "100%", maxWidth: 520 }}>
-        <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 16, marginBottom: 20, height: 220 }}>
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} style={{ position: "relative", zIndex: 1, textAlign: "center", width: "100%", maxWidth: 520, margin: "0 auto", minHeight: "100%", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+        <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "center", gap: "clamp(8px, 3vw, 16px)", marginBottom: 16, minHeight: 180, flexWrap: "wrap" }}>
           {ranked[1] && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
               <Mascot color={seatOf(ranked[1]).base} size="lg" state="entrance" animateKey={2} />
-              <div style={{ marginTop: 8, background: SURFACES.pill, color: "#fff", borderRadius: 999, padding: "4px 10px", fontWeight: 700, fontSize: 14 }}>{ranked[1].name}</div>
+              <div className="cw-truncate" style={{ marginTop: 8, maxWidth: 110, background: SURFACES.pill, color: "#fff", borderRadius: 999, padding: "4px 10px", fontWeight: 700, fontSize: 14 }}>{ranked[1].name}</div>
             </div>
           )}
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 20 }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 8 }}>
             <div style={{ fontSize: 28, marginBottom: 4 }}>👑</div>
             <Mascot color={winSeat.base} size="lg" state="cheer" animateKey={1} />
-            <div style={{ marginTop: 8, background: winSeat.base, color: "#fff", borderRadius: 999, padding: "6px 14px", fontWeight: 800, fontSize: 15 }}>{winner.name} wins!</div>
+            <div className="cw-truncate" style={{ marginTop: 8, maxWidth: 180, background: winSeat.base, color: "#fff", borderRadius: 999, padding: "6px 14px", fontWeight: 800, fontSize: 15 }}>{winner.name} wins!</div>
           </div>
           {ranked[2] && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
               <Mascot color={seatOf(ranked[2]).base} size="lg" state="entrance" animateKey={3} />
-              <div style={{ marginTop: 8, background: SURFACES.pill, color: "#fff", borderRadius: 999, padding: "4px 10px", fontWeight: 700, fontSize: 14 }}>{ranked[2].name}</div>
+              <div className="cw-truncate" style={{ marginTop: 8, maxWidth: 110, background: SURFACES.pill, color: "#fff", borderRadius: 999, padding: "4px 10px", fontWeight: 700, fontSize: 14 }}>{ranked[2].name}</div>
             </div>
           )}
         </div>
-        <div style={{ background: "rgba(255,255,255,0.5)", borderRadius: 20, padding: 12, marginBottom: 20 }}>
+        <div style={{ background: "rgba(255,255,255,0.55)", borderRadius: 20, padding: 12, marginBottom: 18, textAlign: "left" }}>
           {ranked.map((p, idx) => (
-            <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 8px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span className="cw-score" style={{ color: seatOf(p).base, fontSize: 18, minWidth: 20 }}>{idx+1}</span>
-                <span className="cw-body" style={{ color: SURFACES.ink }}>{p.name}{p.id===playerId?" (you)":""}</span>
+            <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 8px", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                <span className="cw-score" style={{ color: seatOf(p).base, fontSize: 18, minWidth: 20, flex: "0 0 auto" }}>{idx+1}</span>
+                <span className="cw-body cw-truncate" style={{ color: SURFACES.ink }}>{p.name}{p.id===playerId?" (you)":""}</span>
               </div>
-              <span className="cw-caption">{p.alive ? `${orbTotal(state,p.id)} dots` : "Eliminated"}</span>
+              <span className="cw-caption" style={{ flex: "0 0 auto" }}>{p.alive ? `${orbTotal(state,p.id)} dots` : "Eliminated"}</span>
             </div>
           ))}
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 12, alignItems: "center" }}>
-          <div className="cw-body" style={{ color: SURFACES.ink, marginBottom: 4 }}>Rematch?</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "center", width: "100%" }}>
+          <div className="cw-body" style={{ color: SURFACES.ink, marginBottom: 2 }}>Rematch?</div>
           {isHost ? (
             <PrimaryPillButton label="REMATCH" onClick={onRematch} />
           ) : (
@@ -70,7 +70,7 @@ export function ResultsScreen(props: {
               <div className="cw-caption" style={{ color: SURFACES.inkSoft }}>Host can start the rematch</div>
             </>
           )}
-          <button onClick={onLobby} style={{ height: 56, padding: "0 28px", borderRadius: 999, border: "3px dashed var(--cw-ink-soft)", background: "transparent", color: SURFACES.ink, fontWeight: 700, fontSize: 17, cursor: "pointer" }}>Lobby</button>
+          <button onClick={onLobby} style={{ width: "min(100%, 280px)", height: 54, padding: "0 24px", borderRadius: 999, border: "3px dashed var(--cw-ink-soft)", background: "rgba(255,255,255,0.25)", color: SURFACES.ink, fontWeight: 700, fontSize: 17, cursor: "pointer" }}>Lobby</button>
         </div>
       </motion.div>
     </div>

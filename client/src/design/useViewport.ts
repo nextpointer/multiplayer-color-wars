@@ -3,11 +3,10 @@ import { useEffect, useState } from "react";
 export function getEffectiveViewport() {
   const w = window.innerWidth;
   const h = window.innerHeight;
-  const forceLandscape = w < h && w < 900;
   return {
-    width: forceLandscape ? h : w,
-    height: forceLandscape ? w : h,
-    forceLandscape,
+    width: w,
+    height: h,
+    forceLandscape: false,
   };
 }
 

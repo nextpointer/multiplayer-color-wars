@@ -7,10 +7,9 @@ export interface Settings {
   muted: boolean;
   haptics: boolean;
   chainSpeed: ChainSpeedSetting;
-  turnTimer: boolean;
 }
 
-const DEFAULTS: Settings = { muted: false, haptics: true, chainSpeed: "normal", turnTimer: true };
+const DEFAULTS: Settings = { muted: false, haptics: true, chainSpeed: "normal" };
 
 function load(): Settings {
   try {
@@ -18,7 +17,6 @@ function load(): Settings {
       muted: localStorage.getItem("cw.muted") === "1",
       haptics: localStorage.getItem("cw.haptics") !== "0",
       chainSpeed: "normal",
-      turnTimer: localStorage.getItem("cw.turnTimer") === "0" ? false : true,
     };
   } catch { return { ...DEFAULTS }; }
 }
@@ -28,7 +26,6 @@ function save(s: Settings) {
     localStorage.setItem("cw.muted", s.muted ? "1" : "0");
     localStorage.setItem("cw.haptics", s.haptics ? "1" : "0");
     localStorage.setItem("cw.chainSpeed", "normal");
-    localStorage.setItem("cw.turnTimer", s.turnTimer ? "1" : "0");
   } catch {}
 }
 
@@ -37,7 +34,6 @@ type Ctx = {
   setMuted: (v: boolean) => void;
   setHaptics: (v: boolean) => void;
   setChainSpeed: (v: ChainSpeedSetting) => void;
-  setTurnTimer: (v: boolean) => void;
 };
 
 const SettingsCtx = createContext<Ctx | null>(null);
@@ -51,7 +47,6 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     setMuted: (v) => setSettings(s => ({ ...s, muted: v })),
     setHaptics: (v) => setSettings(s => ({ ...s, haptics: v })),
     setChainSpeed: (v) => setSettings(s => ({ ...s, chainSpeed: v })),
-    setTurnTimer: (v) => setSettings(s => ({ ...s, turnTimer: v })),
   }), [settings]);
 
   return <SettingsCtx.Provider value={value}>{children}</SettingsCtx.Provider>;

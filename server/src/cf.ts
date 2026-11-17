@@ -45,7 +45,7 @@ export default {
           return;
         }
 
-        // first message must be create or join
+        // first message must be create, join, or rejoin
         let msg: any;
         try { msg = JSON.parse(data); } catch {
           server.send(JSON.stringify({ type: 'error', message: 'Invalid message' }));
@@ -60,6 +60,9 @@ export default {
         } else if (msg?.type === 'join') {
           roomId = (msg?.roomId || '').toString().toUpperCase().trim();
           action = 'join';
+        } else if (msg?.type === 'rejoin') {
+          roomId = (msg?.roomId || '').toString().toUpperCase().trim();
+          action = 'rejoin';
         } else {
           server.send(JSON.stringify({ type: 'error', message: 'Join or create a room first' }));
           return;
@@ -95,7 +98,11 @@ export default {
           ws.addEventListener('error', () => { try { server.close(); } catch {} });
 
           // init room session in DO, then flush any queued client messages
-          ws.send(JSON.stringify({ type: action, roomId, name }));
+          if (action === 'rejoin') {
+            ws.send(JSON.stringify({ type: 'rejoin', roomId, playerId: msg?.playerId, name }));
+          } else {
+            ws.send(JSON.stringify({ type: action, roomId, name }));
+          }
           flushPending();
         } catch {
           server.send(JSON.stringify({ type: 'error', message: 'Failed to connect to room' }));

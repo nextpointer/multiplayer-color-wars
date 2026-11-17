@@ -10,14 +10,17 @@ import {
 type ClientMsg =
   | { type: 'create'; name: string; roomId?: string }
   | { type: 'join'; roomId: string; name: string }
+  | { type: 'rejoin'; roomId: string; playerId: number; name?: string }
   | { type: 'start' }
   | { type: 'move'; r: number; c: number }
-  | { type: 'rematch' };
+  | { type: 'rematch' }
+  | { type: 'ping' };
 
 type ServerMsg =
   | { type: 'room'; roomId: string; playerId: number; players: { id: number; name: string; color: string }[]; hostId: number; state: GameState }
   | { type: 'state'; state: GameState; explosions?: { r: number; c: number; owner: number }[] }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  | { type: 'pong' };
 
 interface Session {
   ws: WebSocket;
@@ -36,7 +39,6 @@ interface StoredRoom {
   hostId: number;
   players: StoredPlayer[];
   state: GameState;
-  turnStartedAt?: number;
 }
 
 function publicPlayers(room: StoredRoom) {
@@ -136,23 +138,7 @@ export class RoomDO {
     };
   }
 
-  private async scheduleTurnTimer() {
-    await this.state.storage.deleteAlarm();
-    if (!this.room || this.room.state.status !== 'playing') return;
-    this.room.turnStartedAt = Date.now();
-    await this.persist();
-    await this.state.storage.setAlarm(Date.now() + 15000);
-  }
 
-  async alarm() {
-    if (!this.room || this.room.state.status !== 'playing') return;
-    const from = this.room.state.currentPlayerIndex;
-    const next = nextAliveIndex(this.room.state, from);
-    this.room.state = { ...this.room.state, currentPlayerIndex: next, turnCount: this.room.state.turnCount + 1 };
-    await this.persist();
-    this.broadcast({ type: 'state', state: this.room.state });
-    await this.scheduleTurnTimer();
-  }
 
   private async handleCreate(session: Session, roomId: string, name: string) {
     if (!this.room) {
@@ -195,6 +181,29 @@ export class RoomDO {
     }
   }
 
+  private async handleRejoin(session: Session, _roomId: string, playerId: number) {
+    if (!this.room) {
+      this.send(session.ws, { type: 'error', message: 'Room not found' });
+      return;
+    }
+    const player = this.room.players.find((p) => p.id === playerId);
+    if (!player) {
+      this.send(session.ws, { type: 'error', message: 'Player not found in room' });
+      return;
+    }
+    // drop any stale sessions bound to this player
+    for (const s of Array.from(this.sessions)) {
+      if (s !== session && s.playerId === playerId) {
+        this.sessions.delete(s);
+        try { s.ws.close(); } catch {}
+      }
+    }
+    player.connected = true;
+    session.playerId = playerId;
+    await this.persist();
+    this.send(session.ws, this.roomPayload(playerId));
+  }
+
   private async onMessage(session: Session, data: any) {
     let msg: ClientMsg;
     try { msg = JSON.parse(String(data)); } catch {
@@ -215,6 +224,16 @@ export class RoomDO {
       await this.handleJoin(session, roomId, name);
       return;
     }
+    if (msg.type === 'rejoin') {
+      const roomId = (msg.roomId || '').toUpperCase().trim();
+      const pid = Number((msg as any).playerId);
+      await this.handleRejoin(session, roomId, pid);
+      return;
+    }
+    if (msg.type === 'ping') {
+      this.send(session.ws, { type: 'pong' });
+      return;
+    }
 
     if (!this.room || session.playerId == null) {
       this.send(session.ws, { type: 'error', message: 'Join or create a room first' });
@@ -229,7 +248,6 @@ export class RoomDO {
       room.state = createGame(room.players.map((p) => ({ name: p.name })));
       await this.persist();
       this.broadcast({ type: 'state', state: room.state });
-      await this.scheduleTurnTimer();
       return;
     }
 
@@ -239,7 +257,6 @@ export class RoomDO {
       room.state = result.state;
       await this.persist();
       this.broadcast({ type: 'state', state: room.state, explosions: result.explosions });
-      await this.scheduleTurnTimer();
       return;
     }
 
@@ -249,7 +266,6 @@ export class RoomDO {
       room.state = createGame(room.players.map((p) => ({ name: p.name })));
       await this.persist();
       this.broadcast({ type: 'state', state: room.state });
-      await this.scheduleTurnTimer();
       return;
     }
   }
@@ -259,6 +275,10 @@ export class RoomDO {
     if (!this.room || session.playerId == null) return;
     const room = this.room;
     const playerId = session.playerId;
+    // if player already has another active session (rejoined), ignore stale close
+    for (const s of this.sessions) {
+      if (s.playerId === playerId) return;
+    }
     const p = room.players.find((x) => x.id === playerId);
     if (p) p.connected = false;
 
@@ -282,28 +302,9 @@ export class RoomDO {
       }
       this.sessions.clear();
     } else if (room.state.status === 'playing') {
-      const leaverId = playerId;
-      const board = room.state.board.map(row => row.map(cell => cell.owner === leaverId ? { owner: null, count: 0 } : { ...cell }));
-      const players = room.state.players.map(pl => pl.id === leaverId ? { ...pl, alive: false } : { ...pl });
-      const alivePlayers = players.filter(pl => pl.alive);
-      let nextState: GameState = { ...room.state, board, players };
-      const connectedAlive = alivePlayers.filter(pl => room.players.find(rp => rp.id === pl.id)?.connected);
-      if (room.state.players.length <= 2 || alivePlayers.length <= 1 || connectedAlive.length <= 1) {
-        const winner = alivePlayers.find(pl => room.players.find(rp => rp.id === pl.id)?.connected)?.id ?? (alivePlayers[0]?.id ?? null);
-        nextState = { ...nextState, status: 'finished', winner };
-        await this.state.storage.deleteAlarm();
-      } else {
-        if (room.state.players[room.state.currentPlayerIndex]?.id === leaverId) {
-          nextState.currentPlayerIndex = nextAliveIndex(nextState, room.state.currentPlayerIndex);
-        }
-        if (!nextState.players[nextState.currentPlayerIndex]?.alive) {
-          nextState.currentPlayerIndex = nextAliveIndex(nextState, nextState.currentPlayerIndex);
-        }
-      }
-      room.state = nextState;
+      // transient disconnect during play: keep player in game so they can rejoin.
       await this.persist();
       this.broadcast({ type: 'state', state: room.state });
-      if (room.state.status === 'playing') await this.scheduleTurnTimer();
     } else {
       await this.persist();
       this.broadcast({ type: 'state', state: room.state });

@@ -135,15 +135,19 @@ export function applyMove(state: GameState, playerId: PlayerId, r: number, c: nu
   if (!current || current.id !== playerId) return { ok: false, error: 'Not your turn' };
   if (!current.alive) return { ok: false, error: 'Player eliminated' };
   const cell = state.board[r][c];
-  if (cell.owner !== null && cell.owner !== playerId) return { ok: false, error: 'Cell owned by opponent' };
+  if (!current.hasPlayed) {
+    if (cell.owner !== null) return { ok: false, error: 'Choose an empty cell for your first move' };
+  } else {
+    if (cell.owner !== playerId) return { ok: false, error: 'You can only increment your own cells' };
+  }
 
   const board = cloneBoard(state.board);
   const players = state.players.map((p) => ({ ...p }));
   const explosions: ExplosionStep[] = [];
 
-  // custom rule: cells start with 3 dots; a move increments dot count
-  const baseCount = cell.count === 0 ? 2 : cell.count;
-  board[r][c] = { owner: playerId, count: baseCount + 1 };
+  // first move: place a new cell with 3 dots; afterwards: increment own cell
+  const nextCount = cell.count === 0 ? 3 : cell.count + 1;
+  board[r][c] = { owner: playerId, count: nextCount };
   players[state.currentPlayerIndex].hasPlayed = true;
 
   // resolve chain reactions

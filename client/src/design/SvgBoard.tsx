@@ -1,22 +1,33 @@
-import React from "react";
+import React, { useEffect } from "react";
+import { motion } from "motion/react";
 import type { GameState } from "@game/shared";
 import { visualsForPlayer, cellHighlight } from "./tokens";
 import { SLOTS, PIECE_R_F, DOT_R_F } from "../engine/geometry";
+import { SPRING } from "./motion";
 import { SvgFlightEngine, type SvgFlightEngineHandle } from "../engine/svgFlight";
 
 function centerOf(r: number, c: number, cell: number, gap: number) {
   return { x: c * (cell + gap) + cell / 2, y: r * (cell + gap) + cell / 2 };
 }
 
+/** Dots are springy: existing dots shuffle between slots on every count change;
+ *  freshly mounted dots (the one that just arrived/landed) pop from the center. */
 function PieceDots({ cx, cy, cell, count, ghosted }: { cx: number; cy: number; cell: number; count: number; ghosted: boolean }) {
   const n = Math.max(0, Math.min(4, count));
-  const dotR = DOT_R_F * cell;
   if (n === 0) return null;
   const slots = SLOTS[n as 1 | 2 | 3 | 4];
+  const dotR = DOT_R_F * cell;
   return (
     <g opacity={ghosted ? 0.35 : 1}>
       {slots.slice(0, n).map((s, i) => (
-        <circle key={i} cx={cx + s.x * cell} cy={cy + s.y * cell} r={dotR} fill="#FFFFFF" />
+        <motion.g
+          key={i}
+          initial={{ x: cx, y: cy, scale: 0.4 }}
+          animate={{ x: cx + s.x * cell, y: cy + s.y * cell, scale: 1 }}
+          transition={SPRING.settle}
+        >
+          <circle r={dotR} fill="#FFFFFF" opacity={ghosted ? 0.5 : 1} />
+        </motion.g>
       ))}
     </g>
   );
@@ -30,8 +41,12 @@ export function SvgBoard(props: {
   chainLocked: boolean;
   onMove: (r: number, c: number) => void;
   flightRef: React.RefObject<SvgFlightEngineHandle>;
+  onMetrics?: (m: { cell: number; gap: number }) => void;
 }) {
-  const { state, playerId, metrics, myTurn, chainLocked, onMove, flightRef } = props;
+  const { state, playerId, metrics, myTurn, chainLocked, onMove, flightRef, onMetrics } = props;
+  useEffect(() => {
+    onMetrics?.({ cell: metrics.cell, gap: metrics.gap });
+  }, [metrics.cell, metrics.gap, onMetrics]);
   const boardW = state.cols * metrics.cell + Math.max(0, state.cols - 1) * metrics.gap;
   const boardH = state.rows * metrics.cell + Math.max(0, state.rows - 1) * metrics.gap;
 
@@ -58,7 +73,10 @@ export function SvgBoard(props: {
             const { x, y } = centerOf(r, c, metrics.cell, metrics.gap);
             const owner = cell.owner != null ? state.players[cell.owner] : null;
             const seat = owner ? visualsForPlayer(owner.color, owner.id) : null;
-            const playable = myTurn && !chainLocked && (cell.owner === null || cell.owner === playerId);
+            const me = state.players.find(p => p.id === playerId);
+            const playable = myTurn && !chainLocked && (
+              !me?.hasPlayed ? cell.owner === null : cell.owner === playerId
+            );
             const fill = seat ? cellHighlight(seat.base) : "var(--cw-cell, #FCEDD0)";
             return (
               <g key={`c-${r}-${c}`} onClick={() => playable && onMove(r, c)} style={{ cursor: playable ? "pointer" : "default" }}>
@@ -69,7 +87,7 @@ export function SvgBoard(props: {
                   height={metrics.cell}
                   rx={metrics.cell * 0.24}
                   fill={fill}
-                  style={{ transition: "fill 350ms ease" }}
+                  style={{ transition: "fill 220ms ease" }}
                 />
                 {cell.count > 0 && owner && seat && (
                   <g>

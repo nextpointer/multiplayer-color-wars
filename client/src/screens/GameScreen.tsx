@@ -2,12 +2,14 @@ import React, { useMemo, useRef } from "react";
 import type { GameState } from "@game/shared";
 import { ScorePill } from "../design/ScorePill";
 import { QuitButton } from "../design/QuitButton";
+import { IconButton } from "../design/IconButton";
 import { Z, visualsForPlayer } from "../design/tokens";
 import { useBoardMetrics, type Reserve } from "../design/useBoardMetrics";
 import { useViewport } from "../design/useViewport";
 import { SvgBoard } from "../design/SvgBoard";
 import type { SvgFlightEngineHandle } from "../engine/svgFlight";
 import type { Settings } from "../state/settings";
+import { play } from "../design/sound";
 
 function vis(p: {id:number;color:string}) { return visualsForPlayer(p.color, p.id); }
 function orbTotal(state: GameState, pid: number) {
@@ -20,19 +22,19 @@ export function GameScreen(props: {
   myTurn: boolean; chainLocked: boolean;
   flightRef: React.RefObject<SvgFlightEngineHandle>;
   flashCells: Set<string>; nudgeKey: number; bumpKeys: Record<number,number>;
-  turnSecondsLeft?: number | null;
-  onMove: (r:number,c:number)=>void; onQuit: ()=>void;
+  onMove: (r:number,c:number)=>void; onQuit: ()=>void; onOpenSettings: ()=>void;
+  onMetrics?: (m: { cell: number; gap: number }) => void;
   settings: Settings;
 }) {
-  const { state, playerId, myTurn, chainLocked, flightRef, bumpKeys, turnSecondsLeft, onMove, onQuit } = props;
+  const { state, playerId, myTurn, chainLocked, flightRef, bumpKeys, onMove, onQuit, onOpenSettings, onMetrics } = props;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const { width: vw, height: vh, forceLandscape } = useViewport();
   const n = state.players.length;
   const landscape = vw >= vh;
   const compactPills = n >= 5;
   const reserve: Reserve = useMemo(() => {
-    if (forceLandscape || landscape) return { top: 4, bottom: 4, left: 76, right: 8 };
-    return { top: 48, bottom: 48, left: 4, right: 4 };
+    if (forceLandscape || landscape) return { top: 8, bottom: 8, left: 76, right: 8 };
+    return { top: 56, bottom: 60, left: 8, right: 8 };
   }, [vw, vh, forceLandscape, landscape, compactPills]);
   const { metrics } = useBoardMetrics(containerRef, state.rows, state.cols, reserve);
   const current = state.players[state.currentPlayerIndex];
@@ -74,19 +76,22 @@ export function GameScreen(props: {
       <div className="cw-no-scrollbar" style={{ position: "absolute", inset: 0, overflow: "auto", WebkitOverflowScrolling: "touch", paddingTop: reserve.top, paddingBottom: reserve.bottom, paddingLeft: reserve.left, paddingRight: reserve.right }}>
         <div style={{ minWidth: "100%", minHeight: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div style={{ position: "relative", width: boardW, height: boardH, margin: "auto" }}>
-            <SvgBoard state={state} playerId={playerId} metrics={metrics} myTurn={myTurn} chainLocked={chainLocked} onMove={onMove} flightRef={flightRef} />
+            <SvgBoard state={state} playerId={playerId} metrics={metrics} myTurn={myTurn} chainLocked={chainLocked} onMove={onMove} flightRef={flightRef} onMetrics={onMetrics} />
           </div>
         </div>
       </div>
 
       {current && !chainLocked && (
-        <div style={{ position: "absolute", right: 8, top: 8, zIndex: Z.hud, pointerEvents: "none", background: curSeat.fan, color: "#fff", borderRadius: 999, padding: "8px 14px", fontWeight: 800 }}>
+        <div style={{ position: "absolute", right: 8, top: showTopBottom ? "calc(env(safe-area-inset-top) + 52px)" : "8px", zIndex: Z.hud, pointerEvents: "none", background: curSeat.fan, color: "#fff", borderRadius: 999, padding: "8px 12px", fontWeight: 800, fontSize: 14, maxWidth: showTopBottom ? "calc(100% - 80px)" : "none" }} className="cw-truncate">
           {current.id === playerId ? "Your turn" : `${current.name}'s turn`}
-          {turnSecondsLeft != null ? ` · ${turnSecondsLeft}s` : ""}
         </div>
       )}
 
-      <div style={{ position: "absolute", bottom: `calc(env(safe-area-inset-bottom) + 12px)`, left: "50%", transform: "translateX(-50%)", zIndex: Z.hud + 1 }}>
+      <div style={{ position: "absolute", left: 8, top: showTopBottom ? "calc(env(safe-area-inset-top) + 48px)" : "8px", zIndex: Z.hud + 1 }}>
+        <IconButton variant="ghost" icon="gear" ariaLabel="Settings" onClick={() => { void play("ui.tap"); onOpenSettings(); }} />
+      </div>
+
+      <div style={{ position: "absolute", bottom: `calc(env(safe-area-inset-bottom) + 10px)`, left: "50%", transform: "translateX(-50%)", zIndex: Z.hud + 1 }}>
         <QuitButton onClick={onQuit} />
       </div>
     </div>

@@ -54,9 +54,9 @@ export function deriveMovePlan(args: {
   let cursor = 0;
   let seq = 0;
 
-  // placement (custom rule: cells start with 3 dots, increment count)
-  const baseCount = sim[r][c].count === 0 ? 2 : sim[r][c].count;
-  sim[r][c] = { owner: playerId, count: baseCount + 1 };
+  // first move: place a new cell with 3 dots; afterwards: increment own cell
+  const nextCount = sim[r][c].count === 0 ? 3 : sim[r][c].count + 1;
+  sim[r][c] = { owner: playerId, count: nextCount };
   const placement = { r, c, countAfter: sim[r][c].count };
   const queue: [number, number][] = [];
   if (sim[r][c].count >= criticalMass(rows, cols, r, c)) {

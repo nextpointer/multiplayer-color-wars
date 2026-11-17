@@ -43,11 +43,11 @@ export function Modal({ open, onClose, title, children, actions }: ModalProps) {
             transition={reduce ? { duration: 0.12 } : SPRING.soft}
             style={{
               width: "100%",
-              maxWidth: "min(92vw, 420px)",
-              maxHeight: "70dvh",
+              maxWidth: "min(94vw, 420px)",
+              maxHeight: "80dvh",
               background: "var(--cw-cloud)",
-              borderRadius: 28,
-              padding: 24,
+              borderRadius: 24,
+              padding: "clamp(16px, 4vw, 24px)",
               boxSizing: "border-box",
               display: "flex",
               flexDirection: "column",

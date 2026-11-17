@@ -64,7 +64,7 @@ function dotPitch(count: number) {
   return ["C5","D5","E5","G5"][Math.max(0, Math.min(3, count - 1))];
 }
 
-export async function play(name: SoundName, opts?: { dotCount?: number; playerKey?: string; wave?: number }) {
+export async function play(name: SoundName, opts?: { dotCount?: number; playerKey?: string; wave?: number; step?: number }) {
   if (muted) return;
   if (!unlocked) await ensure();
   if (!unlocked || !sfxVol) return;
@@ -112,12 +112,12 @@ export async function play(name: SoundName, opts?: { dotCount?: number; playerKe
       }
       case "cascade.tick": {
         const root = opts?.playerKey || "C";
-        const wave = Math.min(6, opts?.wave ?? 0);
+        const step = Math.min(6, opts?.step ?? opts?.wave ?? 0);
         const s1 = new Tone.Synth({ oscillator: { type: "triangle" }, envelope: { attack: 0.005, decay: 0.15, sustain: 0 } }).connect(bus);
         const s2 = new Tone.Synth({ oscillator: { type: "triangle" }, envelope: { attack: 0.005, decay: 0.15, sustain: 0 } }).connect(bus);
         s1.volume.value = -14; s2.volume.value = -14;
-        s1.triggerAttackRelease(note(root, wave * 2, 4), 0.15, now);
-        s2.triggerAttackRelease(note(root, 4 + wave * 2, 4), 0.15, now);
+        s1.triggerAttackRelease(note(root, step * 2, 4), 0.15, now);
+        s2.triggerAttackRelease(note(root, 4 + step * 2, 4), 0.15, now);
         setTimeout(()=>{s1.dispose();s2.dispose();},500); break;
       }
       case "turn.you": {
