@@ -178,7 +178,7 @@ export function HomeFlow(props: {
             More players unlock larger grid options. Default picks a recommended size automatically.
           </div>
 
-          <div style={{ width: "92%", margin: "0 auto" }}>
+          <div style={{ width: "100%", display: "flex", justifyContent: "center" }}>
             <PrimaryPillButton label="CREATE ROOM" onClick={() => onCreate({ maxPlayers: playersCount, grid: gridChoice })} disabled={!connected} />
           </div>
           {!connected && <div className="cw-caption" style={{ marginTop: 10, textAlign: "center", color: "#FE6057" }}>Connecting to server…</div>}

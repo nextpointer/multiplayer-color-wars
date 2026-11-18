@@ -92,6 +92,10 @@ export function IconButton({ variant, icon, onClick, ariaLabel, style, disabled 
       style={{
         width: 56,
         height: 56,
+        minWidth: 56,
+        minHeight: 56,
+        flex: "0 0 56px",
+        aspectRatio: "1 / 1",
         borderRadius: "50%",
         background: bg,
         border,
