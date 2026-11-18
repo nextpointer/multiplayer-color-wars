@@ -128,6 +128,7 @@ export const SvgFlightEngine = forwardRef<SvgFlightEngineHandle, {}>(function Sv
   const gradSeqRef = useRef(0);
 
   const clear = () => {
+    runIdRef.current++; // abort any in-flight play loop so it stops spawning new elements
     if (layerRef.current) layerRef.current.innerHTML = "";
     if (fxRef.current) fxRef.current.innerHTML = "";
     playingRef.current = false;
@@ -471,8 +472,16 @@ export const SvgFlightEngine = forwardRef<SvgFlightEngineHandle, {}>(function Sv
       const myRun = ++runIdRef.current;
       playingRef.current = true;
       const { metrics, speed, reduced } = opts;
-      const flightMs = Math.max(220, SPEED[speed].hopTargetMs);
-      const waveGap = SPEED[speed].waveGap;
+      const wavesCount = plan.waves.length;
+      const bursts = plan.totalBursts || wavesCount;
+      // Speed up large chain reactions to keep gameplay responsive and avoid long endgame animations.
+      let speedMode: "normal" | "fast" = speed;
+      if (bursts >= 12 || wavesCount >= 6) speedMode = "fast";
+      let flightMs: number = Math.max(220, SPEED[speedMode].hopTargetMs);
+      let waveGap: number = SPEED[speedMode].waveGap;
+      if (bursts >= 24 || wavesCount >= 10) { flightMs = Math.max(160, Math.floor(flightMs * 0.72)); waveGap = Math.max(12, Math.floor(waveGap * 0.45)); }
+      else if (bursts >= 16 || wavesCount >= 7) { flightMs = Math.max(180, Math.floor(flightMs * 0.82)); waveGap = Math.max(16, Math.floor(waveGap * 0.6)); }
+      else if (bursts >= 10 || wavesCount >= 5) { flightMs = Math.max(200, Math.floor(flightMs * 0.9)); waveGap = Math.max(20, Math.floor(waveGap * 0.75)); }
       const cellPx = metrics.cell;
       const ballR = Math.max(7, BALL_R_F * cellPx);
       const coreR = Math.max(2.5, CORE_R_F * cellPx);
@@ -525,7 +534,13 @@ export const SvgFlightEngine = forwardRef<SvgFlightEngineHandle, {}>(function Sv
           // ---- 2) CHARGE: the ball grows with mass as each dot merges ----
           const charges: { kick: () => void; release: () => void; absorb: () => void }[] = [];
           const maxCrit = wave.reduce((m, e) => Math.max(m, e.crit || 1), 1);
-          const gatherMs = reduced ? 100 : speed === "fast" ? 35 + maxCrit * 28 : 45 + maxCrit * 40;
+          let gatherBase = reduced ? 100 : speedMode === "fast" ? 35 + maxCrit * 28 : 45 + maxCrit * 40;
+          let mergeStart = 60;
+          let mergeStagger = speedMode === "fast" ? 40 : 60;
+          if (bursts >= 24 || wavesCount >= 10) { gatherBase = Math.max(70, Math.floor(gatherBase * 0.45)); mergeStart = 20; mergeStagger = Math.max(12, Math.floor(mergeStagger * 0.35)); }
+          else if (bursts >= 16 || wavesCount >= 7) { gatherBase = Math.max(90, Math.floor(gatherBase * 0.6)); mergeStart = 30; mergeStagger = Math.max(18, Math.floor(mergeStagger * 0.5)); }
+          else if (bursts >= 10 || wavesCount >= 5) { gatherBase = Math.max(110, Math.floor(gatherBase * 0.75)); mergeStart = 40; mergeStagger = Math.max(24, Math.floor(mergeStagger * 0.7)); }
+          const gatherMs = gatherBase;
           if (layerRef.current && !reduced) {
             const seen = new Set<string>();
             for (const ev of wave) {
@@ -538,8 +553,8 @@ export const SvgFlightEngine = forwardRef<SvgFlightEngineHandle, {}>(function Sv
                 cx: o.x, cy: o.y, cell: cellPx,
                 color: opts.playerColors[ev.owner] || opts.originColor,
                 crit: ev.crit, dotR,
-                mergeStart: 60,
-                mergeStagger: speed === "fast" ? 40 : 60,
+                mergeStart,
+                mergeStagger,
               }));
             }
           }
@@ -558,7 +573,7 @@ export const SvgFlightEngine = forwardRef<SvgFlightEngineHandle, {}>(function Sv
             }
 
             const flightsInWave = wave.reduce((s, e) => s + (e.targets?.length ?? 0), 0);
-            const lite = flightsInWave > 12;          // perf guard: simplify busy waves earlier for smoothness
+            const lite = flightsInWave > 12 || bursts >= 16 || wavesCount >= 7; // perf guard: simplify busy waves earlier for smoothness
             const donePromises: Promise<void>[] = [];
             const perKeyIdx = new Map<string, number>(); // per-target-cell counter
             let flightNo = 0;
@@ -608,7 +623,10 @@ export const SvgFlightEngine = forwardRef<SvgFlightEngineHandle, {}>(function Sv
           for (const c of charges) c.absorb();
           opts.onWaveArrivals?.(wi, wave);
 
-          if (wi < plan.waves.length - 1) await sleep(waveGap);
+          if (wi < plan.waves.length - 1) {
+            if (abort()) return;
+            await sleep(waveGap);
+          }
         }
         await sleep(30);
       } finally {

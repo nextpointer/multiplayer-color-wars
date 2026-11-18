@@ -296,7 +296,33 @@ function AppInner() {
     const token = ++animTokenRef.current;
     animatingRef.current = true;
     setChainLocked(true);
-    const capMs = nextState.status === 'finished' ? 12_000 : 20_000;
+
+    const waves = plan.waves.length;
+    const bursts = plan.totalBursts || waves;
+    const finishing = nextState.status === "finished";
+    const effectiveSpeed = (finishing && (bursts >= 8 || waves >= 4)) ? "fast" : settings.chainSpeed;
+
+    // For very large endgame chains, snap quickly to final state so results are responsive and no stray animations remain.
+    if (finishing && (bursts >= 40 || waves >= 14)) {
+      try { engine.clear(); } catch {}
+      setDisplayState(nextState);
+      preMoveStateRef.current = nextState;
+      setChainLocked(false);
+      animatingRef.current = false;
+      return;
+    }
+
+    let capMs = finishing ? 12_000 : 20_000;
+    if (finishing) {
+      if (bursts >= 24 || waves >= 10) capMs = 2200;
+      else if (bursts >= 16 || waves >= 7) capMs = 3500;
+      else if (bursts >= 10 || waves >= 5) capMs = 5000;
+      else capMs = 8000;
+    } else {
+      if (bursts >= 24 || waves >= 10) capMs = 7000;
+      else if (bursts >= 16 || waves >= 7) capMs = 10000;
+    }
+
     try {
       const run = engine.play(plan, {
         metrics: {
@@ -305,7 +331,7 @@ function AppInner() {
           boardW: pre.cols * m.cell + (pre.cols - 1) * m.gap,
           boardH: pre.rows * m.cell + (pre.rows - 1) * m.gap,
         },
-        speed: settings.chainSpeed,
+        speed: effectiveSpeed,
         reduced,
         originColor,
         snapshots,
@@ -316,14 +342,14 @@ function AppInner() {
           // while it forms. Committing the plain snapshot keeps the incremented dots
           // visible, so the player sees the cell fill up BEFORE it explodes.
           setDisplayState(boardToState(snapshots[wi], nextState));
-          void play("burst.pop");
-          haptic("medium");
+          if (!finishing || bursts < 18) void play("burst.pop");
+          if (!finishing || bursts < 18) haptic("medium");
         },
         onWaveArrivals: (wi) => {
           if (token !== animTokenRef.current) return;
           const snap = snapshots[wi + 1];
           if (snap) setDisplayState(boardToState(snap, nextState)); // dots appear as resting dots
-          void play("cascade.tick", { step: wi });
+          if (!finishing || bursts < 18) void play("cascade.tick", { step: wi });
         },
       });
       await Promise.race([run, new Promise<void>((resolve) => setTimeout(resolve, capMs))]);
@@ -336,6 +362,9 @@ function AppInner() {
         preMoveStateRef.current = nextState;
         setChainLocked(false);
         animatingRef.current = false;
+      } else {
+        // stale animation: ensure it cannot leave visuals behind
+        try { engine.clear(); } catch {}
       }
     }
   }, [settings.chainSpeed, reduced]);
@@ -613,6 +642,17 @@ function AppInner() {
     }
     prevTurnRef.current = cur;
   }, [serverState?.currentPlayerIndex, serverState?.status, playerId]);
+
+  // when game ends, ensure no chain-reaction visuals remain behind the scoreboard
+  useEffect(() => {
+    if (serverState?.status === "finished") {
+      clearBotTimer();
+      animTokenRef.current++;
+      animatingRef.current = false;
+      try { flightRef.current?.clear(); } catch {}
+      setChainLocked(false);
+    }
+  }, [serverState?.status, serverState?.winner, serverState?.turnCount, clearBotTimer]);
 
   // turn bg
   const current = serverState?.players[serverState.currentPlayerIndex];
