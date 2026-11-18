@@ -38,11 +38,43 @@ export const PLAYER_COLORS = [
   '#ec4899', // pink
 ];
 
-export function recommendedBoardSize(playerCount: number): { rows: number; cols: number } {
+export interface GridSize { rows: number; cols: number; }
+
+export function recommendedBoardSize(playerCount: number): GridSize {
   if (playerCount <= 2) return { rows: 6, cols: 9 };
   if (playerCount <= 4) return { rows: 9, cols: 9 };
   if (playerCount <= 6) return { rows: 9, cols: 12 };
   return { rows: 10, cols: 15 }; // 7-8 players
+}
+
+export function normalizeGridChoice(rows: unknown, cols: unknown): GridSize | null {
+  const r = Math.round(Number(rows));
+  const c = Math.round(Number(cols));
+  if (!Number.isFinite(r) || !Number.isFinite(c)) return null;
+  if (r < 4 || c < 4 || r > 20 || c > 30) return null;
+  return { rows: r, cols: c };
+}
+
+export function gridOptionsForPlayers(playerCount: number): GridSize[] {
+  const n = Math.max(2, Math.min(8, Math.floor(Number(playerCount) || 2)));
+  const rec = recommendedBoardSize(n);
+  const base: GridSize[] = n <= 2
+    ? [{ rows: 5, cols: 7 }, { rows: 6, cols: 9 }, { rows: 7, cols: 10 }, { rows: 9, cols: 9 }]
+    : n <= 4
+      ? [{ rows: 6, cols: 9 }, { rows: 7, cols: 10 }, { rows: 9, cols: 9 }, { rows: 9, cols: 12 }, { rows: 10, cols: 12 }]
+      : n <= 6
+        ? [{ rows: 9, cols: 9 }, { rows: 9, cols: 12 }, { rows: 10, cols: 12 }, { rows: 10, cols: 15 }, { rows: 12, cols: 12 }]
+        : [{ rows: 9, cols: 12 }, { rows: 10, cols: 15 }, { rows: 12, cols: 12 }, { rows: 12, cols: 15 }, { rows: 12, cols: 18 }, { rows: 14, cols: 18 }];
+  const key = (g: GridSize) => `${g.rows}x${g.cols}`;
+  const seen = new Set<string>();
+  const out: GridSize[] = [];
+  for (const g of [rec, ...base]) {
+    const k = key(g);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(g);
+  }
+  return out.sort((a, b) => (a.rows * a.cols) - (b.rows * b.cols) || a.rows - b.rows || a.cols - b.cols);
 }
 
 export function createEmptyBoard(rows: number, cols: number): Cell[][] {

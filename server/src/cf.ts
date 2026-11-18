@@ -100,6 +100,8 @@ export default {
           // init room session in DO, then flush any queued client messages
           if (action === 'rejoin') {
             ws.send(JSON.stringify({ type: 'rejoin', roomId, playerId: msg?.playerId, name }));
+          } else if (action === 'create') {
+            ws.send(JSON.stringify({ type: 'create', roomId, name, maxPlayers: msg?.maxPlayers, grid: msg?.grid }));
           } else {
             ws.send(JSON.stringify({ type: action, roomId, name }));
           }

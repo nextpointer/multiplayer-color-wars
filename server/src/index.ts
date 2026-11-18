@@ -7,16 +7,18 @@ import {
   createEmptyBoard,
   createGame,
   getValidMoves,
+  normalizeGridChoice,
   recommendedBoardSize,
   removePlayerCells,
   type GameState,
+  type GridSize,
   PLAYER_COLORS,
 } from '@game/shared';
 
 type ConnQuality = 'good' | 'ok' | 'bad' | 'offline';
 
 type ClientMsg =
-  | { type: 'create'; name: string }
+  | { type: 'create'; name: string; maxPlayers?: number; grid?: { rows: number; cols: number } | null }
   | { type: 'join'; roomId: string; name: string }
   | { type: 'rejoin'; roomId: string; playerId: number; name?: string }
   | { type: 'start' }
@@ -55,6 +57,8 @@ interface Room {
   turnTimer?: ReturnType<typeof setTimeout> | null;
   turnToken: number;
   turnKey: string | null;
+  chosenGrid: GridSize | null;
+  maxPlayers: number;
 }
 
 const rooms = new Map<string, Room>();
@@ -116,7 +120,7 @@ function broadcastRoom(room: Room) {
 }
 
 function lobbyState(room: Room): GameState {
-  const size = recommendedBoardSize(Math.max(room.players.length, 2));
+  const size = room.chosenGrid || recommendedBoardSize(Math.max(room.players.length, 2));
   return {
     rows: size.rows,
     cols: size.cols,
@@ -132,7 +136,7 @@ function lobbyState(room: Room): GameState {
     status: 'waiting',
     winner: null,
     turnCount: 0,
-    maxPlayers: 8,
+    maxPlayers: room.maxPlayers,
   };
 }
 
@@ -269,6 +273,8 @@ app.get(
         if (msg.type === 'create') {
           const name = (msg.name || 'Player').trim().slice(0, 20) || 'Player';
           const id = makeId();
+          const maxPlayers = Math.max(2, Math.min(8, Math.floor(Number(msg.maxPlayers) || 8)));
+          const chosenGrid = msg.grid ? normalizeGridChoice((msg.grid as any).rows, (msg.grid as any).cols) : null;
           const room: Room = {
             id,
             hostId: 0,
@@ -277,6 +283,8 @@ app.get(
             turnTimer: null,
             turnToken: 0,
             turnKey: null,
+            chosenGrid,
+            maxPlayers,
           };
           const player: RoomPlayer = { id: 0, name, color: PLAYER_COLORS[0], ws, connected: true, quality: 'good', rtt: null, lastSeen: Date.now(), removed: false };
           room.players.push(player);
@@ -294,7 +302,7 @@ app.get(
           const room = rooms.get(roomId);
           if (!room) return send(ws, { type: 'error', message: 'Room not found' });
           if (room.state.status !== 'waiting') return send(ws, { type: 'error', message: 'Game already started' });
-          if (room.players.length >= 8) return send(ws, { type: 'error', message: 'Room is full (max 8 players)' });
+          if (room.players.length >= room.maxPlayers) return send(ws, { type: 'error', message: `Room is full (max ${room.maxPlayers} players)` });
           const pid = room.players.length;
           const player: RoomPlayer = { id: pid, name, color: PLAYER_COLORS[pid], ws, connected: true, quality: 'good', rtt: null, lastSeen: Date.now(), removed: false };
           room.players.push(player);
@@ -366,7 +374,8 @@ app.get(
         if (msg.type === 'start') {
           if (playerId !== room.hostId) return send(ws, { type: 'error', message: 'Only host can start' });
           if (room.players.length < 2) return send(ws, { type: 'error', message: 'Need at least 2 players' });
-          room.state = createGame(room.players.map((p) => ({ name: p.name })));
+          room.state = createGame(room.players.map((p) => ({ name: p.name })), room.state.rows, room.state.cols);
+          room.state.maxPlayers = room.maxPlayers;
           for (const p of room.players) { p.removed = false; if (p.connected) p.quality = p.quality === 'offline' ? 'good' : p.quality; }
           broadcastState(room);
           scheduleTurnTimer(room);

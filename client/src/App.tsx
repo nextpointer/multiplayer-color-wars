@@ -693,14 +693,16 @@ function AppInner() {
   const state = displayState || serverState;
   const myTurn = !!serverState && serverState.status === "playing" && playerId != null && current?.id === playerId && !chainLocked;
 
-  const doCreate = () => {
+  const doCreate = (opts: { maxPlayers: number; grid: { rows: number; cols: number } | null }) => {
     if (!name.trim()) { toast("Enter your name"); return; }
     localStorage.setItem("cw.name", name.trim());
     fatalReloadHandledRef.current = false;
     clearStoredSession();
     sessionRef.current = null;
     void play("ui.tap"); haptic("light");
-    send({ type: "create", name: name.trim() });
+    const payload: any = { type: "create", name: name.trim(), maxPlayers: opts.maxPlayers };
+    if (opts.grid) payload.grid = opts.grid;
+    send(payload);
   };
   const doJoin = () => {
     const code = joinCode.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
@@ -763,6 +765,7 @@ function AppInner() {
         onOpenSettings={() => setShowSettings(true)}
         showSettings={showSettings} setShowSettings={setShowSettings}
         settings={settings} setMuted={setMuted} setHaptics={setHaptics} setChainSpeed={setChainSpeed}
+        maxPlayers={serverState.maxPlayers} rows={serverState.rows} cols={serverState.cols}
       />
     );
   }

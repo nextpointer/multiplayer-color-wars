@@ -9,11 +9,12 @@ export type MascotProps = {
   size?: MascotSize;
   state?: MascotState;
   animateKey?: number | string;
+  smile?: boolean;
 };
 
 const D: Record<MascotSize, number> = { lg: 56, md: 40, sm: 20 };
 
-export function Mascot({ color = "var(--cw-ink)", size = "md", state = "idle", animateKey }: MascotProps) {
+export function Mascot({ color = "var(--cw-ink)", size = "md", state = "idle", animateKey, smile = false }: MascotProps) {
   const reduce = useReducedMotion();
   const d = D[size];
   const headD = d;
@@ -104,6 +105,21 @@ export function Mascot({ color = "var(--cw-ink)", size = "md", state = "idle", a
           opacity,
         }}
       />
+      {smile && !ghost && (
+        <div
+          style={{
+            position: "absolute",
+            left: (totalW - headD * 0.38) / 2,
+            bottom: (podiumH * 0.45) + bodyH - headD * 0.35 + headD * 0.28,
+            width: headD * 0.38,
+            height: headD * 0.18,
+            borderBottom: `${Math.max(2.5, d * 0.055)}px solid rgba(66, 50, 76, 0.72)`,
+            borderRadius: "0 0 999px 999px",
+            opacity,
+            pointerEvents: "none",
+          }}
+        />
+      )}
     </motion.div>
   );
 }

@@ -9,6 +9,7 @@ import { SURFACES } from "../design/tokens";
 import { play } from "../design/sound";
 import { useSettings } from "../state/settings";
 import type { BotDifficulty } from "../engine/bot";
+import { gridOptionsForPlayers, recommendedBoardSize, type GridSize } from "@game/shared";
 
 const HOWTO_TEXT = "Try to occupy the whole field with your color. On your first turn, tap an empty cell to place your starting cell with 3 dots. After that, you can only tap your own cells to add 1 dot. When a cell's dots reach its neighbor count, it splits and adds 1 dot to each neighbor, capturing them. Last color standing wins!";
 
@@ -26,7 +27,7 @@ export function HomeFlow(props: {
   joinCode: string; setJoinCode: (v: string) => void;
   view: HomeView;
   setView: (v: HomeView) => void;
-  onCreate: () => void; onJoin: () => void;
+  onCreate: (opts: { maxPlayers: number; grid: GridSize | null }) => void; onJoin: () => void;
   onStartSingle: (difficulty: BotDifficulty) => void;
   onOpenSettings: () => void; onOpenHelp: () => void;
   showSettings: boolean; setShowSettings: (v: boolean) => void;
@@ -34,6 +35,7 @@ export function HomeFlow(props: {
   const { connected, name, setName, joinCode, setJoinCode, view, setView, onCreate, onJoin, onStartSingle, onOpenSettings, onOpenHelp, showSettings, setShowSettings } = props;
   const { settings, setMuted } = useSettings();
   const [playersCount, setPlayersCount] = useState(4);
+  const [gridChoice, setGridChoice] = useState<GridSize | null>(null);
   const [joinErr, setJoinErr] = useState(false);
   const [difficulty, setDifficulty] = useState<BotDifficulty>("medium");
 
@@ -53,10 +55,10 @@ export function HomeFlow(props: {
         </div>
         <div style={{ position: "relative", padding: "20px 16px 40px", display: "flex", flexDirection: "column", alignItems: "center" }}>
           <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "center", gap: "clamp(4px, 2vw, 16px)", flexWrap: "wrap", marginBottom: 12, maxWidth: 360 }}>
-            <Mascot color="#ef4444" size="lg" state="entrance" animateKey={1} />
-            <Mascot color="#3b82f6" size="lg" state="entrance" animateKey={2} />
-            <Mascot color="#22c55e" size="lg" state="entrance" animateKey={3} />
-            <Mascot color="#eab308" size="lg" state="entrance" animateKey={4} />
+            <Mascot color="#ef4444" size="lg" state="entrance" animateKey={1} smile />
+            <Mascot color="#3b82f6" size="lg" state="entrance" animateKey={2} smile />
+            <Mascot color="#22c55e" size="lg" state="entrance" animateKey={3} smile />
+            <Mascot color="#eab308" size="lg" state="entrance" animateKey={4} smile />
           </div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16, marginTop: 4, flexWrap: "wrap" }}>
             <PrimaryPillButton label="VS COMPUTER" onClick={() => { play("ui.tap"); setView("single"); }} />
@@ -116,6 +118,10 @@ export function HomeFlow(props: {
   }
 
   if (view === "create") {
+    const gridOptions = gridOptionsForPlayers(playersCount);
+    const defaultGrid = recommendedBoardSize(playersCount);
+    const isDefaultGrid = !gridChoice;
+    const sameGrid = (a: GridSize | null, b: GridSize) => !!a && a.rows === b.rows && a.cols === b.cols;
     return (
       <div className="cw-page-shell cw-no-scrollbar" style={{ background: SURFACES.azure, position: "relative", overflowY: "auto" }}>
         <div style={{ background: SURFACES.plum, height: 120, position: "relative", overflow: "hidden", padding: "16px", display: "flex", alignItems: "center", gap: 12 }}>
@@ -128,16 +134,52 @@ export function HomeFlow(props: {
           <input value={name} onChange={e => setName(e.target.value)} maxLength={12} placeholder="Your name"
             className="cw-truncate"
             style={{ width: "100%", height: 56, borderRadius: 999, border: "none", padding: "0 20px", textAlign: "center", fontSize: 17, fontWeight: 700, color: SURFACES.ink, outline: "none", marginBottom: 16, background: SURFACES.cloud }} />
+
           <div className="cw-caption" style={{ marginBottom: 6, letterSpacing: 1 }}>PLAYERS</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
             {[2,3,4,5,6,7,8].map(n => (
-              <button key={n} onClick={() => { setPlayersCount(n); play("ui.tap"); }}
+              <button key={n} onClick={() => { setPlayersCount(n); setGridChoice(null); play("ui.tap"); }}
                 style={{ width: 56, height: 48, borderRadius: 16, border: "none", fontWeight: 800, fontSize: 18, background: playersCount===n ? SURFACES.action : SURFACES.cloud, color: playersCount===n ? SURFACES.whiteText : SURFACES.ink, transform: playersCount===n ? "rotate(-4deg)" : "none", cursor: "pointer" }}>{n}</button>
             ))}
           </div>
-          <div style={{ marginBottom: 24 }} />
+
+          <div className="cw-caption" style={{ marginBottom: 6, letterSpacing: 1 }}>GRID SIZE</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+            <button
+              onClick={() => { setGridChoice(null); play("ui.tap"); }}
+              style={{
+                height: 44, padding: "0 14px", borderRadius: 14, border: "none", fontWeight: 800, fontSize: 15, cursor: "pointer",
+                background: isDefaultGrid ? SURFACES.action : SURFACES.cloud,
+                color: isDefaultGrid ? SURFACES.whiteText : SURFACES.ink,
+                transform: isDefaultGrid ? "rotate(-2deg)" : "none",
+              }}
+            >
+              Default ({defaultGrid.rows}×{defaultGrid.cols})
+            </button>
+            {gridOptions.map((g) => {
+              const active = sameGrid(gridChoice, g);
+              return (
+                <button
+                  key={`${g.rows}x${g.cols}`}
+                  onClick={() => { setGridChoice(g); play("ui.tap"); }}
+                  style={{
+                    height: 44, padding: "0 14px", borderRadius: 14, border: "none", fontWeight: 800, fontSize: 15, cursor: "pointer",
+                    background: active ? SURFACES.action : SURFACES.cloud,
+                    color: active ? SURFACES.whiteText : SURFACES.ink,
+                    transform: active ? "rotate(-2deg)" : "none",
+                  }}
+                >
+                  {g.rows}×{g.cols}
+                </button>
+              );
+            })}
+          </div>
+          <div className="cw-caption" style={{ marginBottom: 22, color: SURFACES.inkSoft }}>
+            More players unlock larger grid options. Default picks a recommended size automatically.
+          </div>
+
           <div style={{ width: "92%", margin: "0 auto" }}>
-            <PrimaryPillButton label="CREATE ROOM" onClick={onCreate} disabled={!connected} />
+            <PrimaryPillButton label="CREATE ROOM" onClick={() => onCreate({ maxPlayers: playersCount, grid: gridChoice })} disabled={!connected} />
           </div>
           {!connected && <div className="cw-caption" style={{ marginTop: 10, textAlign: "center", color: "#FE6057" }}>Connecting to server…</div>}
         </div>
@@ -215,10 +257,10 @@ export function HomeFlow(props: {
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} style={{ position: "relative", zIndex: 1, textAlign: "center", width: "100%", maxWidth: 420 }}>
           <div className="cw-display" style={{ color: SURFACES.plum, marginBottom: 12 }}>COLOR WARS</div>
           <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "center", gap: "clamp(2px, 1.5vw, 12px)", flexWrap: "wrap", margin: "0 auto 16px", maxWidth: 340 }}>
-            <Mascot color="#ef4444" size="lg" state="entrance" animateKey={1} />
-            <Mascot color="#3b82f6" size="lg" state="entrance" animateKey={2} />
-            <Mascot color="#22c55e" size="lg" state="entrance" animateKey={3} />
-            <Mascot color="#eab308" size="lg" state="entrance" animateKey={4} />
+            <Mascot color="#ef4444" size="lg" state="entrance" animateKey={1} smile />
+            <Mascot color="#3b82f6" size="lg" state="entrance" animateKey={2} smile />
+            <Mascot color="#22c55e" size="lg" state="entrance" animateKey={3} smile />
+            <Mascot color="#eab308" size="lg" state="entrance" animateKey={4} smile />
           </div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
             <PrimaryPillButton label="VS COMPUTER" onClick={() => { play("ui.tap"); setView("single"); }} />

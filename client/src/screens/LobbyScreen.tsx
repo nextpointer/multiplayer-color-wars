@@ -22,11 +22,14 @@ export function LobbyScreen(props: {
   showSettings: boolean; setShowSettings: (v: boolean) => void;
   settings: Settings;
   setMuted: (v:boolean)=>void; setHaptics:(v:boolean)=>void; setChainSpeed:(v:any)=>void;
+  maxPlayers?: number;
+  rows?: number;
+  cols?: number;
 }) {
-  const { roomId, players, hostId, playerId, onStart, onBack, showSettings, setShowSettings } = props;
+  const { roomId, players, hostId, playerId, onStart, onBack, showSettings, setShowSettings, maxPlayers: maxPlayersProp, rows, cols } = props;
   const { show: toast } = useToast();
   const isHost = hostId === playerId;
-  const maxPlayers = 8;
+  const maxPlayers = Math.max(2, Math.min(8, Math.floor(Number(maxPlayersProp) || 8)));
   const slotCount = Math.min(maxPlayers, Math.max(players.length + (players.length < maxPlayers ? 1 : 0), 2));
   const slots = Array.from({ length: slotCount }, (_, i) => players[i] || null);
   const me = players.find(p => p.id === playerId);
@@ -54,6 +57,7 @@ export function LobbyScreen(props: {
           <div>
             <div className="cw-caption" style={{ letterSpacing: 1 }}>PLAYERS</div>
             <div className="cw-body" style={{ color: SURFACES.ink, fontWeight: 700 }}>{players.length} / {maxPlayers} joined</div>
+            {rows && cols ? <div className="cw-caption" style={{ color: SURFACES.inkSoft, marginTop: 2 }}>Grid {rows}×{cols}</div> : null}
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <span style={{ padding: "6px 10px", borderRadius: 999, background: SURFACES.cloud, color: SURFACES.inkSoft, fontSize: 12, fontWeight: 700 }}>

@@ -3,16 +3,18 @@ import {
   createEmptyBoard,
   createGame,
   getValidMoves,
+  normalizeGridChoice,
   recommendedBoardSize,
   removePlayerCells,
   type GameState,
+  type GridSize,
   PLAYER_COLORS,
 } from '../../shared/src/index';
 
 type ConnQuality = 'good' | 'ok' | 'bad' | 'offline';
 
 type ClientMsg =
-  | { type: 'create'; name: string; roomId?: string }
+  | { type: 'create'; name: string; roomId?: string; maxPlayers?: number; grid?: { rows: number; cols: number } | null }
   | { type: 'join'; roomId: string; name: string }
   | { type: 'rejoin'; roomId: string; playerId: number; name?: string }
   | { type: 'start' }
@@ -50,6 +52,8 @@ interface StoredRoom {
   hostId: number;
   players: StoredPlayer[];
   state: GameState;
+  chosenGrid?: GridSize | null;
+  maxPlayers?: number;
 }
 
 interface RoomMeta {
@@ -74,7 +78,11 @@ function publicPlayers(room: StoredRoom): PublicPlayer[] {
 }
 
 function lobbyState(room: StoredRoom): GameState {
-  const size = recommendedBoardSize(Math.max(room.players.length, 2));
+  const chosen = room.chosenGrid ? normalizeGridChoice(room.chosenGrid.rows, room.chosenGrid.cols) : null;
+  const size = chosen || recommendedBoardSize(Math.max(room.players.length, 2));
+  const maxPlayers = Math.max(2, Math.min(8, Math.floor(Number(room.maxPlayers) || 8)));
+  room.maxPlayers = maxPlayers;
+  room.chosenGrid = chosen;
   return {
     rows: size.rows,
     cols: size.cols,
@@ -90,7 +98,7 @@ function lobbyState(room: StoredRoom): GameState {
     status: 'waiting',
     winner: null,
     turnCount: 0,
-    maxPlayers: 8,
+    maxPlayers,
   };
 }
 
@@ -231,13 +239,17 @@ export class RoomDO {
     return false;
   }
 
-  private async handleCreate(session: Session, roomId: string, name: string) {
+  private async handleCreate(session: Session, roomId: string, name: string, maxPlayersIn?: number, gridIn?: { rows: number; cols: number } | null) {
     if (!this.room) {
+      const maxPlayers = Math.max(2, Math.min(8, Math.floor(Number(maxPlayersIn) || 8)));
+      const chosenGrid = gridIn ? normalizeGridChoice((gridIn as any).rows, (gridIn as any).cols) : null;
       this.room = {
         id: roomId,
         hostId: 0,
         players: [{ id: 0, name, color: PLAYER_COLORS[0], connected: true, quality: 'good', removed: false }],
         state: null as any,
+        chosenGrid,
+        maxPlayers,
       };
       this.room.state = lobbyState(this.room);
       this.meta = { turnDeadline: null, turnKey: null };
@@ -259,8 +271,9 @@ export class RoomDO {
       this.send(session.ws, { type: 'error', message: 'Game already started' });
       return;
     }
-    if (this.room.players.length >= 8) {
-      this.send(session.ws, { type: 'error', message: 'Room is full (max 8 players)' });
+    const maxPlayers = Math.max(2, Math.min(8, Math.floor(Number(this.room.maxPlayers ?? this.room.state.maxPlayers) || 8)));
+    if (this.room.players.length >= maxPlayers) {
+      this.send(session.ws, { type: 'error', message: `Room is full (max ${maxPlayers} players)` });
       return;
     }
     const pid = this.room.players.length;
@@ -382,7 +395,7 @@ export class RoomDO {
     if (msg.type === 'create') {
       const roomId = ((msg as any).roomId || '').toUpperCase().trim();
       const name = (msg.name || 'Player').trim().slice(0, 20) || 'Player';
-      await this.handleCreate(session, roomId, name);
+      await this.handleCreate(session, roomId, name, (msg as any).maxPlayers, (msg as any).grid);
       return;
     }
     if (msg.type === 'join') {
@@ -427,7 +440,9 @@ export class RoomDO {
     if (msg.type === 'start') {
       if (playerId !== room.hostId) return this.send(session.ws, { type: 'error', message: 'Only host can start' });
       if (room.players.length < 2) return this.send(session.ws, { type: 'error', message: 'Need at least 2 players' });
-      room.state = createGame(room.players.map((p) => ({ name: p.name })));
+      const maxPlayers = Math.max(2, Math.min(8, Math.floor(Number(room.maxPlayers ?? room.state.maxPlayers) || 8)));
+      room.state = createGame(room.players.map((p) => ({ name: p.name })), room.state.rows, room.state.cols);
+      room.state.maxPlayers = maxPlayers;
       for (const p of room.players) { p.removed = false; if (p.connected) p.quality = normQuality(p.quality); }
       this.syncTurnTimerMeta();
       await this.persist();
