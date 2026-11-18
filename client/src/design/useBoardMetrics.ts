@@ -25,14 +25,15 @@ export function computeBoardMetrics(zoneW: number, zoneH: number, rows: number, 
     denomW > 0 ? safeW / denomW : 0,
     denomH > 0 ? safeH / denomH : 0
   );
-  // On small screens/grids, prefer a readable minimum cell size and allow the board area to pan/scroll.
-  const minCell = safeW < 520 ? 34 : safeW < 900 ? 30 : 0;
-  let cell = Math.max(minCell, fitCell);
+  // Prefer fitting the full board in view (responsive, no overflow). Cap to avoid oversized cells.
+  let cell = fitCell;
   const maxByDim = Math.min(
     denomW > 0 ? 720 / denomW : 720,
     denomH > 0 ? 720 / denomH : 720
   );
   if (Number.isFinite(maxByDim)) cell = Math.min(cell, maxByDim);
+  // Keep a tiny safety floor for extreme cases while still favoring fit.
+  if (Number.isFinite(fitCell) && fitCell > 0) cell = Math.max(8, cell);
   if (!Number.isFinite(cell) || cell < 0) cell = 0;
   const gap = cell * 0.1;
   const piece = cell * 0.78;

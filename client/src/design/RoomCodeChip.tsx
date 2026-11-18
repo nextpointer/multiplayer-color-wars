@@ -27,10 +27,23 @@ export function RoomCodeChip({ code, onCopied }: RoomCodeChipProps) {
   const [popKey, setPopKey] = useState(0);
 
   const doCopy = async () => {
+    const shareUrl = `${location.origin}${location.pathname}?room=${encodeURIComponent(code)}`;
     try {
-      await navigator.clipboard?.writeText(code);
+      await navigator.clipboard?.writeText(shareUrl);
     } catch {
-      // fallback
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = shareUrl;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch {
+        // ignore
+      }
     }
     play("ui.tap");
     haptic("light");
@@ -44,7 +57,7 @@ export function RoomCodeChip({ code, onCopied }: RoomCodeChipProps) {
     <motion.button
       type="button"
       onClick={doCopy}
-      aria-label={`Room code ${code}, tap to copy`}
+      aria-label={`Room code ${code}, tap to copy invite link`}
       key={popKey}
       animate={{ scale: copied && !reduce ? [1, 1.06, 1] : 1 }}
       transition={reduce ? { duration: 0.12 } : { duration: 0.2, ease: "easeOut" }}

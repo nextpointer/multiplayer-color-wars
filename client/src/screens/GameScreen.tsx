@@ -56,7 +56,7 @@ export function GameScreen(props: {
     return (
       <ScorePill key={s.p.id} score={s.score} color={s.seat.base} seatIndex={s.p.id} active={active && !chainLocked}
         tucked={false} ghosted={!s.p.alive} compact={true} name={s.p.name} bumpKey={bumpKeys[s.p.id]||0} tuckDirection={edge === "top" ? "up" : "right"}
-        connQuality={conn?.quality} pingMs={isMe ? (myRtt ?? null) : null} isMe={isMe} statusLabel={statusLabel} />
+        connQuality={conn?.quality} pingMs={isMe ? (myRtt ?? null) : null} isMe={isMe} statusLabel={statusLabel} showMyPing={false} />
     );
   };
 
@@ -89,25 +89,44 @@ export function GameScreen(props: {
         </div>
       )}
 
-      {phonePortrait ? (
-        <>
-          <div style={{ position: "absolute", left: 12, bottom: `calc(env(safe-area-inset-bottom) + 12px)`, zIndex: Z.hud + 1 }}>
-            <IconButton variant="ghost" icon="gear" ariaLabel="Settings" onClick={() => { void play("ui.tap"); onOpenSettings(); }} />
+      {(() => {
+        const q = myQuality || "good";
+        const dot = q === "good" ? "#22c55e" : q === "ok" ? "#eab308" : q === "bad" ? "#ef4444" : "#6b7280";
+        const label = myRtt != null ? `${myRtt}ms` : (q === "offline" ? "offline" : "…");
+        const badge = (
+          <div title={`Connection: ${q}${myRtt != null ? ` (${myRtt}ms)` : ""}`} aria-label={`Connection ${q} ${label}`}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 999, background: "rgba(47,51,62,0.88)", color: "#fff", fontSize: 12, fontWeight: 800, boxShadow: `0 0 0 2px ${dot}55` }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: dot, boxShadow: `0 0 0 2px ${dot}33` }} />
+            <span>{label}</span>
           </div>
-          <div style={{ position: "absolute", right: 12, bottom: `calc(env(safe-area-inset-bottom) + 12px)`, zIndex: Z.hud + 1 }}>
-            <QuitButton onClick={onQuit} />
-          </div>
-        </>
-      ) : (
-        <>
-          <div style={{ position: "absolute", left: 8, top: "8px", zIndex: Z.hud + 1 }}>
-            <IconButton variant="ghost" icon="gear" ariaLabel="Settings" onClick={() => { void play("ui.tap"); onOpenSettings(); }} />
-          </div>
-          <div style={{ position: "absolute", bottom: `calc(env(safe-area-inset-bottom) + 10px)`, left: "50%", transform: "translateX(-50%)", zIndex: Z.hud + 1 }}>
-            <QuitButton onClick={onQuit} />
-          </div>
-        </>
-      )}
+        );
+        if (phonePortrait) {
+          return (
+            <>
+              <div style={{ position: "absolute", left: 12, bottom: `calc(env(safe-area-inset-bottom) + 76px)`, zIndex: Z.hud + 1 }}>
+                {badge}
+              </div>
+              <div style={{ position: "absolute", left: 12, bottom: `calc(env(safe-area-inset-bottom) + 12px)`, zIndex: Z.hud + 1 }}>
+                <IconButton variant="ghost" icon="gear" ariaLabel="Settings" onClick={() => { void play("ui.tap"); onOpenSettings(); }} />
+              </div>
+              <div style={{ position: "absolute", right: 12, bottom: `calc(env(safe-area-inset-bottom) + 12px)`, zIndex: Z.hud + 1 }}>
+                <QuitButton onClick={onQuit} />
+              </div>
+            </>
+          );
+        }
+        return (
+          <>
+            <div style={{ position: "absolute", left: 8, top: "8px", zIndex: Z.hud + 1, display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start" }}>
+              <IconButton variant="ghost" icon="gear" ariaLabel="Settings" onClick={() => { void play("ui.tap"); onOpenSettings(); }} />
+              {badge}
+            </div>
+            <div style={{ position: "absolute", bottom: `calc(env(safe-area-inset-bottom) + 10px)`, left: "50%", transform: "translateX(-50%)", zIndex: Z.hud + 1 }}>
+              <QuitButton onClick={onQuit} />
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }

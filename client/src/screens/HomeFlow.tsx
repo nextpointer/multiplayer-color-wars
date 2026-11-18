@@ -139,7 +139,7 @@ export function HomeFlow(props: {
             }}
           />
           <div className="cw-caption" style={{ marginBottom: 22, textAlign: "center" }}>Ask a friend for their 5-letter room code</div>
-          <div style={{ width: "92%", maxWidth: 320, margin: "0 auto" }}>
+          <div style={{ width: "100%", maxWidth: 320, margin: "0 auto", display: "flex", justifyContent: "center" }}>
             <PrimaryPillButton label="JOIN ROOM" onClick={onJoin} disabled={!canJoin} />
           </div>
           {!name.trim() && <div className="cw-caption" style={{ marginTop: 10, textAlign: "center" }}>Enter your name to join</div>}

@@ -20,6 +20,7 @@ export type ScorePillProps = {
   pingMs?: number | null;
   isMe?: boolean;
   statusLabel?: string | null;
+  showMyPing?: boolean;
 };
 
 function connColor(q?: ConnQuality) {
@@ -45,6 +46,7 @@ export function ScorePill({
   pingMs,
   isMe = false,
   statusLabel = null,
+  showMyPing = false,
 }: ScorePillProps) {
   const reduce = useReducedMotion();
   const height = compact ? 44 : 56;
@@ -109,7 +111,7 @@ export function ScorePill({
           {name}
         </span>
       ) : null}
-      {isMe && pingMs != null && (
+      {isMe && showMyPing && pingMs != null && (
         <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", opacity: 0.9, lineHeight: 1, padding: "2px 6px", borderRadius: 999, background: "rgba(255,255,255,0.18)" }}>
           {pingMs}ms
         </span>

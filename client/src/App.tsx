@@ -91,8 +91,29 @@ function AppInner() {
   const reconnectAttemptRef = useRef(0);
   const shouldReconnectRef = useRef(true);
   const intentionallyLeavingRef = useRef(false);
+  const fatalReloadHandledRef = useRef(false);
   const animatingRef = useRef(false);
   const conn = useConnectionQuality();
+
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const raw = params.get("room") || params.get("roomId") || params.get("code") || "";
+      const code = raw.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 5);
+      if (code) {
+        setJoinCode(code);
+        setHomeView("join");
+        params.delete("room");
+        params.delete("roomId");
+        params.delete("code");
+        const qs = params.toString();
+        const next = `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash || ""}`;
+        window.history.replaceState({}, "", next);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   useEffect(() => { displayStateRef.current = displayState; }, [displayState]);
   useEffect(() => { serverStateRef.current = serverState; }, [serverState]);
@@ -257,6 +278,8 @@ function AppInner() {
           const m = msg.message || "Error";
           // If rejoin/session is no longer valid, reset so user can start over.
           if (/room not found|player not found|lobby changed/i.test(m)) {
+            if (fatalReloadHandledRef.current) return;
+            fatalReloadHandledRef.current = true;
             sessionRef.current = null;
             toast(m);
             void play("error.thud");

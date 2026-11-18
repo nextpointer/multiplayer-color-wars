@@ -44,7 +44,7 @@ export function LobbyScreen(props: {
             </div>
           </div>
           <div style={{ flex: "0 0 auto", marginLeft: "auto" }}>
-            <RoomCodeChip code={roomId} onCopied={() => toast("Room code copied")} />
+            <RoomCodeChip code={roomId} onCopied={() => toast("Invite link copied")} />
           </div>
         </div>
       </div>
