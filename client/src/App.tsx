@@ -52,6 +52,26 @@ function withPlacement(base: GameState, r: number, c: number, playerId: number):
   return boardToState(board, base);
 }
 
+const MP_SESSION_KEY = "cw.session";
+type StoredSession = { roomId: string; playerId: number; name: string };
+function loadStoredSession(): StoredSession | null {
+  try {
+    const raw = localStorage.getItem(MP_SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    if (!s || typeof s.roomId !== "string" || !Number.isFinite(Number(s.playerId))) return null;
+    const roomId = String(s.roomId).toUpperCase().trim();
+    if (!roomId) return null;
+    return { roomId, playerId: Number(s.playerId), name: String(s.name || "Player").trim().slice(0, 20) || "Player" };
+  } catch { return null; }
+}
+function saveStoredSession(s: StoredSession) {
+  try { localStorage.setItem(MP_SESSION_KEY, JSON.stringify(s)); } catch {}
+}
+function clearStoredSession() {
+  try { localStorage.removeItem(MP_SESSION_KEY); } catch {}
+}
+
 function AppInner() {
   const { settings, setMuted, setHaptics, setChainSpeed } = useSettings();
   const { show: toast } = useToast();
@@ -76,6 +96,7 @@ function AppInner() {
   const [nudgeKey, setNudgeKey] = useState(0);
   const [bumpKeys, setBumpKeys] = useState<Record<number, number>>({});
   const [localMode, setLocalMode] = useState<{ difficulty: BotDifficulty; humanId: number; botId: number; humanName: string; botName: string } | null>(null);
+  const [restoringSession, setRestoringSession] = useState<boolean>(() => !!loadStoredSession());
 
   const wsRef = useRef<WebSocket | null>(null);
   const flightRef = useRef<SvgFlightEngineHandle | null>(null);
@@ -87,7 +108,7 @@ function AppInner() {
   const metricsRef = useRef<{ cell: number; gap: number } | null>(null);
   const playMoveAnimationRef = useRef<((pre: GameState, plan: MoveAnimationPlan, nextState: GameState) => Promise<void>) | null>(null);
   const animTokenRef = useRef(0);
-  const sessionRef = useRef<{ roomId: string; playerId: number; name: string } | null>(null);
+  const sessionRef = useRef<StoredSession | null>(loadStoredSession());
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const reconnectAttemptRef = useRef(0);
@@ -104,9 +125,10 @@ function AppInner() {
       const params = new URLSearchParams(window.location.search);
       const raw = params.get("room") || params.get("roomId") || params.get("code") || "";
       const code = raw.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 5);
+      const hasRestorableSession = !!sessionRef.current;
       if (code) {
         setJoinCode(code);
-        setHomeView("join");
+        if (!hasRestorableSession) setHomeView("join");
         params.delete("room");
         params.delete("roomId");
         params.delete("code");
@@ -124,6 +146,21 @@ function AppInner() {
   useEffect(() => { localModeRef.current = localMode; }, [localMode]);
   useEffect(() => { unlockOnGesture(); }, []);
   useEffect(() => () => { if (botTimerRef.current) clearTimeout(botTimerRef.current); }, []);
+
+  useEffect(() => {
+    if (!restoringSession) return;
+    if (roomId && serverState && playerId != null) { setRestoringSession(false); return; }
+    if (!connected) return;
+    const t = setTimeout(() => {
+      if (sessionRef.current && !(roomId && serverState && playerId != null)) {
+        sessionRef.current = null;
+        clearStoredSession();
+        setRestoringSession(false);
+        setHomeView("landing");
+      }
+    }, 6000);
+    return () => clearTimeout(t);
+  }, [restoringSession, connected, roomId, serverState, playerId]);
 
   const send = useCallback((obj: any) => {
     const ws = wsRef.current;
@@ -157,6 +194,8 @@ function AppInner() {
     setLocalMode(null);
     localModeRef.current = null;
     sessionRef.current = null;
+    clearStoredSession();
+    setRestoringSession(false);
     setRoomId(null);
     setPlayerId(null);
     setHostId(null);
@@ -167,6 +206,33 @@ function AppInner() {
     setShowQuit(false);
     setHomeView("landing");
   }, [resetGameView]);
+
+  const returnToMultiplayerHome = useCallback((msg?: string) => {
+    clearBotTimer();
+    animTokenRef.current++;
+    animatingRef.current = false;
+    try { flightRef.current?.clear(); } catch {}
+    pendingMoveRef.current = null;
+    preMoveStateRef.current = null;
+    prevTurnRef.current = null;
+    setChainLocked(false);
+    setFlashCells(new Set());
+    setBumpKeys({});
+    setNudgeKey(0);
+    sessionRef.current = null;
+    clearStoredSession();
+    setRestoringSession(false);
+    setRoomId(null);
+    setPlayerId(null);
+    setHostId(null);
+    setLobbyPlayers([]);
+    setServerState(null);
+    setDisplayState(null);
+    setShowQuit(false);
+    setDisconnectedNotice(false);
+    setHomeView("landing");
+    if (msg) { toast(msg); void play("error.thud"); }
+  }, [clearBotTimer, toast]);
 
   const playLocalMoveInternal = useCallback(async (pre: GameState, moverId: number, r: number, c: number) => {
     const result = applyMove(pre, moverId, r, c);
@@ -271,6 +337,8 @@ function AppInner() {
     setShowQuit(false);
     setShowSettings(false);
     setDisconnectedNotice(false);
+    setRestoringSession(false);
+    // keep any stored multiplayer session intact; local mode is separate and sessionRef is not used for it
     sessionRef.current = null;
     void play("ui.tap");
     haptic("light");
@@ -458,14 +526,11 @@ function AppInner() {
         }
         if (msg.type === "error") {
           const m = msg.message || "Error";
-          // If rejoin/session is no longer valid, reset so user can start over.
+          // If rejoin/session is no longer valid, reset gracefully without a page reload.
           if (/room not found|player not found|lobby changed/i.test(m)) {
             if (fatalReloadHandledRef.current) return;
             fatalReloadHandledRef.current = true;
-            sessionRef.current = null;
-            toast(m);
-            void play("error.thud");
-            setTimeout(() => { window.location.reload(); }, 600);
+            returnToMultiplayerHome(m);
             return;
           }
           toast(m);
@@ -489,7 +554,11 @@ function AppInner() {
           setDisplayState(msg.state);
           preMoveStateRef.current = msg.state;
           prevTurnRef.current = msg.state.players[msg.state.currentPlayerIndex]?.id ?? null;
-          sessionRef.current = { roomId: msg.roomId, playerId: msg.playerId, name: (localStorage.getItem("cw.name") || name || "Player").trim() || "Player" };
+          const s = { roomId: msg.roomId, playerId: msg.playerId, name: (localStorage.getItem("cw.name") || name || "Player").trim() || "Player" };
+          sessionRef.current = s;
+          saveStoredSession(s);
+          setRestoringSession(false);
+          fatalReloadHandledRef.current = false;
           return;
         }
         if (msg.type === "state") {
@@ -667,6 +736,9 @@ function AppInner() {
   const doCreate = () => {
     if (!name.trim()) { toast("Enter your name"); return; }
     localStorage.setItem("cw.name", name.trim());
+    fatalReloadHandledRef.current = false;
+    clearStoredSession();
+    sessionRef.current = null;
     void play("ui.tap"); haptic("light");
     send({ type: "create", name: name.trim() });
   };
@@ -675,11 +747,32 @@ function AppInner() {
     if (code.length < 5) { toast("Enter the room code"); void play("error.thud"); return; }
     if (!name.trim()) { toast("Enter your name"); return; }
     localStorage.setItem("cw.name", name.trim());
+    fatalReloadHandledRef.current = false;
+    clearStoredSession();
+    sessionRef.current = null;
     void play("ui.tap");
     send({ type: "join", roomId: code, name: name.trim() });
   };
 
   if (!roomId || !serverState || playerId == null) {
+    if (restoringSession) {
+      return (
+        <div className="cw-page-shell" style={{ background: "var(--cw-azure, #E7F4FC)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div style={{ textAlign: "center", maxWidth: 360 }}>
+            <div className="cw-h1" style={{ color: "var(--cw-plum, #42324C)", marginBottom: 8 }}>Rejoining…</div>
+            <div className="cw-body" style={{ color: "var(--cw-ink-soft, #5C6270)", marginBottom: 18 }}>
+              {connected ? "Restoring your game session." : "Connecting to server…"}
+            </div>
+            <button
+              onClick={() => { clearStoredSession(); sessionRef.current = null; setRestoringSession(false); setHomeView("landing"); }}
+              style={{ height: 48, padding: "0 20px", borderRadius: 999, border: "3px dashed var(--cw-ink-soft)", background: "rgba(255,255,255,0.35)", color: "var(--cw-ink)", fontWeight: 700, cursor: "pointer" }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
       <>
         <HomeFlow
@@ -706,7 +799,7 @@ function AppInner() {
       <LobbyScreen
         roomId={roomId} players={lobbyPlayers} hostId={hostId} playerId={playerId}
         onStart={() => { void play("ui.tap"); send({ type: "start" }); }}
-        onBack={() => { window.location.reload(); }}
+        onBack={() => { clearStoredSession(); sessionRef.current = null; window.location.reload(); }}
         onOpenSettings={() => setShowSettings(true)}
         showSettings={showSettings} setShowSettings={setShowSettings}
         settings={settings} setMuted={setMuted} setHaptics={setHaptics} setChainSpeed={setChainSpeed}
@@ -786,6 +879,8 @@ function AppInner() {
             if (localMode) {
               exitLocalMode();
             } else {
+              clearStoredSession();
+              sessionRef.current = null;
               window.location.reload();
             }
           }}
@@ -804,6 +899,8 @@ function AppInner() {
               exitLocalMode();
             } else {
               intentionallyLeavingRef.current = true;
+              clearStoredSession();
+              sessionRef.current = null;
               try { send({ type: "leave" }); } catch {}
               setTimeout(() => window.location.reload(), 120);
             }
