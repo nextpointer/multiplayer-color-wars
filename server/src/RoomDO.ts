@@ -57,7 +57,7 @@ interface RoomMeta {
   turnKey: string | null;
 }
 
-const TURN_MS = 3 * 60_000;
+const TURN_MS = 60_000;
 
 function normQuality(q: any): ConnQuality {
   return q === 'good' || q === 'ok' || q === 'bad' ? q : 'good';

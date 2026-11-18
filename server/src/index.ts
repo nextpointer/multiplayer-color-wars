@@ -58,7 +58,7 @@ interface Room {
 }
 
 const rooms = new Map<string, Room>();
-const TURN_MS = 3 * 60_000;
+const TURN_MS = 60_000;
 
 function turnKeyOf(state: GameState): string | null {
   if (state.status !== 'playing') return null;
