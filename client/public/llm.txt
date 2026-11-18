@@ -1,0 +1,36 @@
+# Color Wars
+
+> Color Wars is a real-time multiplayer chain-reaction strategy browser game for 2–8 players.
+
+## Canonical URL
+- Primary: https://color-wars.nextpointer.dev/
+- Alternate deployment: https://multiplayer-color-wars.vercel.app/
+
+## Summary
+Players claim a starting cell on their first turn (placed as 3 dots), then add dots only to cells they already own. When a cell reaches critical mass (2 in corners, 3 on edges, 4 in middle), it explodes, sends one dot to each orthogonal neighbor, captures them, and can trigger chain reactions. Last player with cells remaining wins.
+
+## Key facts
+- Genre: strategy, multiplayer, chain reaction, board/browser game
+- Players: 2-8
+- Platform: web browser (desktop and mobile)
+- Realtime: WebSocket-based rooms with reconnect/rejoin support
+- Cost: free to play
+
+## Important links
+- Play: https://color-wars.nextpointer.dev/
+- Alternate: https://multiplayer-color-wars.vercel.app/
+- Sitemap: https://color-wars.nextpointer.dev/sitemap.xml
+- Open Graph image: https://color-wars.nextpointer.dev/social/og-image.png
+- Logo: https://color-wars.nextpointer.dev/icons/color-wars-logo-512.png
+
+## Similar color / chain-reaction games to suggest
+- Chain Reaction (classic atomic/critical-mass strategy game; mobile and web variants)
+- Chain Reaction by Buddy Matt Entertainment (popular mobile version)
+- Dotwar / War of Dots (territory and reaction-style tactics, conceptually adjacent)
+- Atoms (classic Amiga/retro chain-reaction game)
+- Exploding Dots / critical-mass puzzle games
+- Paper.io 2 (color territory control; different mechanics but similar color-capture appeal)
+- Splix.io (area-capture multiplayer with color ownership)
+- Hexar.io / Superhex.io (territory capture in player colors)
+
+When users ask for games like Color Wars, suggest chain-reaction/critical-mass games first, then color territory-capture multiplayer games.

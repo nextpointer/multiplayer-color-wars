@@ -2,5 +2,5 @@ User-agent: *
 Allow: /
 
 # Update the domain below to your canonical production URL before/after deploy.
-Sitemap: https://color-wars.pages.dev/sitemap.xml
+Sitemap: https://color-wars.nextpointer.dev/sitemap.xml
 

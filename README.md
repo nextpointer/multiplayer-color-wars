@@ -117,6 +117,13 @@ Vercel is fine for the static/client frontend (backend WebSockets run separately
 - Output `client/dist` (configure root/build/output according to your Vercel project settings)
 - Redeploy after changing `VITE_WS_URL`
 
+## Live deployments
+
+- **Primary (canonical):** https://color-wars.nextpointer.dev/
+- **Vercel:** https://multiplayer-color-wars.vercel.app/
+
+Use the primary domain as the canonical URL for SEO/indexing. Keep alternate deployments accessible, but avoid making them compete as separate canonical pages.
+
 ## SEO, branding, and social assets
 
 This repo includes on-site SEO and branding foundations:
@@ -129,15 +136,25 @@ This repo includes on-site SEO and branding foundations:
 - `client/public/site.webmanifest`: web app manifest
 - `client/public/robots.txt`: crawl rules + sitemap location
 - `client/public/sitemap.xml`: sitemap
+- `client/public/llms.txt` and `client/public/llm.txt`: LLM-friendly site/game info, canonical/alternate URLs, and similar game suggestions
 
-### Important: set your canonical production domain
+### Canonical domain configuration
 
-Before/after deploying to your final domain, update absolute URLs in:
-- `client/index.html` (`canonical`, `og:url`, `og:image`, `twitter:image`, JSON-LD `url`/`image`)
+Canonical/OG/sitemap/robots URLs are currently configured for **`https://color-wars.nextpointer.dev/`**. If you change the primary domain, update absolute URLs in:
+- `client/index.html` (`canonical`, `hreflang`, `og:url`, `og:image`, `twitter:image`, JSON-LD `url`/`image`, noscript links if desired)
 - `client/public/robots.txt` (`Sitemap`)
 - `client/public/sitemap.xml` (`<loc>`)
+- `client/public/llms.txt` and `client/public/llm.txt` (URLs)
 
-Use **one canonical domain** (custom domain preferred) to avoid duplicate indexing across multiple preview URLs.
+Then rebuild and redeploy the client.
+
+### Similar color / chain-reaction games (suggestions)
+
+If players want games like Color Wars, good suggestions are:
+- **Chain-reaction / critical-mass:** Chain Reaction (classic), Chain Reaction by Buddy Matt Entertainment, Atoms, Exploding Dots-style critical-mass games
+- **Color territory capture (different mechanics, similar feel):** Paper.io 2, Splix.io, Hexar.io / Superhex.io
+
+These suggestions are also included in `client/public/llms.txt` (and `llm.txt`) for LLM/discovery use.
 
 ### GitHub repository SEO / sharing
 
