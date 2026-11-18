@@ -13,8 +13,8 @@ export const spring = {
 export const SPRING = spring;
 
 export const SPEED = {
-  normal: { flightBoostMs: 0, waveGap: 80, hopTargetMs: 280 },
-  fast: { flightBoostMs: 0, waveGap: 40, hopTargetMs: 200 },
+  normal: { flightBoostMs: 0, waveGap: 55, hopTargetMs: 230 },
+  fast: { flightBoostMs: 0, waveGap: 30, hopTargetMs: 170 },
 } as const;
 
 export const DUR = {

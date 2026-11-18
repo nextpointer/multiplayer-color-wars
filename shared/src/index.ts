@@ -115,6 +115,73 @@ export function orbCountsByPlayer(state: GameState): number[] {
   return counts;
 }
 
+export function getValidMoves(state: GameState, playerId: PlayerId): { r: number; c: number }[] {
+  if (state.status !== 'playing') return [];
+  const idx = state.players.findIndex((p) => p.id === playerId);
+  if (idx < 0) return [];
+  const player = state.players[idx];
+  if (!player.alive) return [];
+  if (state.currentPlayerIndex !== idx) return [];
+  const moves: { r: number; c: number }[] = [];
+  if (!player.hasPlayed) {
+    for (let r = 0; r < state.rows; r++) {
+      for (let c = 0; c < state.cols; c++) {
+        if (state.board[r][c].owner === null) moves.push({ r, c });
+      }
+    }
+  } else {
+    for (let r = 0; r < state.rows; r++) {
+      for (let c = 0; c < state.cols; c++) {
+        if (state.board[r][c].owner === playerId) moves.push({ r, c });
+      }
+    }
+  }
+  return moves;
+}
+
+export function removePlayerCells(state: GameState, playerId: PlayerId): GameState {
+  const board = cloneBoard(state.board);
+  let changed = false;
+  for (let r = 0; r < state.rows; r++) {
+    for (let c = 0; c < state.cols; c++) {
+      if (board[r][c].owner === playerId) {
+        board[r][c] = { owner: null, count: 0 };
+        changed = true;
+      }
+    }
+  }
+  if (!changed) return state;
+
+  const players = state.players.map((p) => (p.id === playerId ? { ...p, alive: false } : { ...p }));
+  const nextState: GameState = {
+    ...state,
+    board,
+    players,
+  };
+
+  if (nextState.status !== 'playing') return nextState;
+
+  const everyonePlayed = allHavePlayed(nextState.players);
+  if (everyonePlayed) {
+    const counts = orbCountsByPlayer(nextState);
+    for (let i = 0; i < nextState.players.length; i++) {
+      if (counts[i] === 0) nextState.players[i].alive = false;
+    }
+  }
+
+  const alivePlayers = nextState.players.filter((p) => p.alive);
+  if (everyonePlayed && alivePlayers.length <= 1) {
+    nextState.status = 'finished';
+    nextState.winner = alivePlayers.length === 1 ? alivePlayers[0].id : null;
+  } else {
+    const cur = nextState.players[nextState.currentPlayerIndex];
+    if (!cur || !cur.alive) {
+      nextState.currentPlayerIndex = nextAliveIndex(nextState, nextState.currentPlayerIndex);
+    }
+  }
+  return nextState;
+}
+
 function allHavePlayed(players: PlayerState[]): boolean {
   return players.every((p) => p.hasPlayed);
 }

@@ -525,7 +525,7 @@ export const SvgFlightEngine = forwardRef<SvgFlightEngineHandle, {}>(function Sv
           // ---- 2) CHARGE: the ball grows with mass as each dot merges ----
           const charges: { kick: () => void; release: () => void; absorb: () => void }[] = [];
           const maxCrit = wave.reduce((m, e) => Math.max(m, e.crit || 1), 1);
-          const gatherMs = reduced ? 140 : speed === "fast" ? 45 + maxCrit * 40 : 60 + maxCrit * 60;
+          const gatherMs = reduced ? 100 : speed === "fast" ? 35 + maxCrit * 28 : 45 + maxCrit * 40;
           if (layerRef.current && !reduced) {
             const seen = new Set<string>();
             for (const ev of wave) {
@@ -549,7 +549,7 @@ export const SvgFlightEngine = forwardRef<SvgFlightEngineHandle, {}>(function Sv
           // ---- 3) ANTICIPATE + LAUNCH: squash, then one sphere per neighbour ----
           if (!reduced && layerRef.current) {
             for (const c of charges) c.kick();        // anticipation squash to 0.84
-            await sleep(70);
+            await sleep(reduced ? 30 : 45);
             if (abort()) return;
 
             for (const ev of wave) {
@@ -592,7 +592,7 @@ export const SvgFlightEngine = forwardRef<SvgFlightEngineHandle, {}>(function Sv
                 donePromises.push(spawnBall(layerRef.current, {
                   kick, land, center: to, ballR, coreR, color,
                   lift: hopLift, durMs: flightMs,
-                  delayMs: Math.min(flightNo * 24, 200), lite,
+                  delayMs: Math.min(flightNo * 16, 140), lite,
                 }));
                 flightNo++;
               }
@@ -610,7 +610,7 @@ export const SvgFlightEngine = forwardRef<SvgFlightEngineHandle, {}>(function Sv
 
           if (wi < plan.waves.length - 1) await sleep(waveGap);
         }
-        await sleep(60);
+        await sleep(30);
       } finally {
         if (runIdRef.current === myRun) {
           playingRef.current = false;

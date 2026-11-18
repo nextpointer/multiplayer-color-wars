@@ -6,7 +6,9 @@ import {
   applyMove,
   createEmptyBoard,
   createGame,
+  getValidMoves,
   recommendedBoardSize,
+  removePlayerCells,
   type GameState,
   PLAYER_COLORS,
 } from '@game/shared';
@@ -32,6 +34,7 @@ interface RoomPlayer {
   color: string;
   ws: WSContext;
   connected: boolean;
+  disconnectTimer?: ReturnType<typeof setTimeout> | null;
 }
 
 interface Room {
@@ -39,9 +42,21 @@ interface Room {
   hostId: number;
   players: RoomPlayer[];
   state: GameState;
+  turnTimer?: ReturnType<typeof setTimeout> | null;
+  turnToken: number;
+  turnKey: string | null;
 }
 
 const rooms = new Map<string, Room>();
+const TURN_MS = 60_000;
+const GONE_MS = 60_000;
+
+function turnKeyOf(state: GameState): string | null {
+  if (state.status !== 'playing') return null;
+  const cur = state.players[state.currentPlayerIndex];
+  if (!cur || !cur.alive) return null;
+  return `${state.turnCount}:${state.currentPlayerIndex}:${cur.id}`;
+}
 
 function makeId(len = 5) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -60,15 +75,6 @@ function broadcast(room: Room, msg: ServerMsg) {
   for (const p of room.players) {
     if (p.connected) send(p.ws, msg);
   }
-}
-
-function nextAliveIndex(state: GameState, fromIndex: number): number {
-  const n = state.players.length;
-  for (let i = 1; i <= n; i++) {
-    const idx = (fromIndex + i) % n;
-    if (state.players[idx].alive) return idx;
-  }
-  return fromIndex;
 }
 
 function publicPlayers(room: Room) {
@@ -107,6 +113,110 @@ function lobbyState(room: Room): GameState {
   };
 }
 
+function clearTurnTimer(room: Room) {
+  if (room.turnTimer) {
+    clearTimeout(room.turnTimer);
+    room.turnTimer = null;
+  }
+  room.turnToken++;
+  room.turnKey = null;
+}
+
+function clearGoneTimer(p: RoomPlayer) {
+  if (p.disconnectTimer) {
+    clearTimeout(p.disconnectTimer);
+    p.disconnectTimer = null;
+  }
+}
+
+function clearAllTimers(room: Room) {
+  clearTurnTimer(room);
+  for (const p of room.players) clearGoneTimer(p);
+}
+
+function scheduleTurnTimer(room: Room) {
+  const key = turnKeyOf(room.state);
+  if (!key) {
+    clearTurnTimer(room);
+    return;
+  }
+  if (room.turnTimer && room.turnKey === key) return;
+  clearTurnTimer(room);
+  room.turnKey = key;
+  const token = room.turnToken;
+  room.turnTimer = setTimeout(() => {
+    if (token !== room.turnToken) return;
+    void autoPlayTurn(room, token);
+  }, TURN_MS);
+}
+
+function broadcastState(room: Room, explosions?: { r: number; c: number; owner: number }[]) {
+  broadcast(room, { type: 'state', state: room.state, explosions });
+}
+
+function autoPlayTurn(room: Room, token: number) {
+  if (token !== room.turnToken) return;
+  if (!rooms.has(room.id)) return;
+  if (room.state.status !== 'playing') return;
+  const current = room.state.players[room.state.currentPlayerIndex];
+  if (!current || !current.alive) {
+    scheduleTurnTimer(room);
+    return;
+  }
+  const moves = getValidMoves(room.state, current.id);
+  if (moves.length === 0) {
+    // should be rare; avoid stalling by removing player's cells as a fallback
+    room.state = removePlayerCells(room.state, current.id);
+    broadcastState(room);
+    if (room.state.status === 'playing') scheduleTurnTimer(room);
+    else clearTurnTimer(room);
+    return;
+  }
+  const move = moves[Math.floor(Math.random() * moves.length)];
+  const result = applyMove(room.state, current.id, move.r, move.c);
+  if (!result.ok || !result.state) {
+    // fallback: try not to stall
+    scheduleTurnTimer(room);
+    return;
+  }
+  room.state = result.state;
+  broadcastState(room, result.explosions);
+  if (room.state.status === 'playing') scheduleTurnTimer(room);
+  else clearTurnTimer(room);
+}
+
+function removeGonePlayer(room: Room, playerId: number) {
+  if (!rooms.has(room.id)) return;
+  const p = room.players.find((x) => x.id === playerId);
+  if (!p) return;
+  clearGoneTimer(p);
+  // if they reconnected somehow, don't remove
+  if (p.connected) return;
+  if (room.state.status !== 'playing') return;
+
+  const beforeIndex = room.state.currentPlayerIndex;
+  room.state = removePlayerCells(room.state, playerId);
+  broadcastState(room);
+  if (room.state.status !== 'playing') {
+    clearTurnTimer(room);
+    return;
+  }
+  // turn may have changed (if it was their turn or they were current), reschedule safely
+  scheduleTurnTimer(room);
+  // ensure we didn't leave a stale timer token state issue
+  void beforeIndex;
+}
+
+function scheduleGoneTimer(room: Room, playerId: number) {
+  const p = room.players.find((x) => x.id === playerId);
+  if (!p) return;
+  clearGoneTimer(p);
+  p.disconnectTimer = setTimeout(() => {
+    p.disconnectTimer = null;
+    removeGonePlayer(room, playerId);
+  }, GONE_MS);
+}
+
 const app = new Hono();
 const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
@@ -136,8 +246,11 @@ app.get(
             hostId: 0,
             players: [],
             state: null as any,
+            turnTimer: null,
+            turnToken: 0,
+            turnKey: null,
           };
-          const player: RoomPlayer = { id: 0, name, color: PLAYER_COLORS[0], ws, connected: true };
+          const player: RoomPlayer = { id: 0, name, color: PLAYER_COLORS[0], ws, connected: true, disconnectTimer: null };
           room.players.push(player);
           room.state = lobbyState(room);
           rooms.set(id, room);
@@ -155,7 +268,7 @@ app.get(
           if (room.state.status !== 'waiting') return send(ws, { type: 'error', message: 'Game already started' });
           if (room.players.length >= 8) return send(ws, { type: 'error', message: 'Room is full (max 8 players)' });
           const pid = room.players.length;
-          const player: RoomPlayer = { id: pid, name, color: PLAYER_COLORS[pid], ws, connected: true };
+          const player: RoomPlayer = { id: pid, name, color: PLAYER_COLORS[pid], ws, connected: true, disconnectTimer: null };
           room.players.push(player);
           room.state = lobbyState(room);
           currentRoom = room;
@@ -173,8 +286,11 @@ app.get(
           if (!player) return send(ws, { type: 'error', message: 'Player not found in room' });
           player.ws = ws;
           player.connected = true;
+          clearGoneTimer(player);
           currentRoom = room;
           playerId = pid;
+          // if game is playing, ensure turn timer is running for current turn
+          if (room.state.status === 'playing') scheduleTurnTimer(room);
           send(ws, roomPayload(room, pid));
           return;
         }
@@ -192,7 +308,9 @@ app.get(
           if (playerId !== room.hostId) return send(ws, { type: 'error', message: 'Only host can start' });
           if (room.players.length < 2) return send(ws, { type: 'error', message: 'Need at least 2 players' });
           room.state = createGame(room.players.map((p) => ({ name: p.name })));
+          for (const p of room.players) clearGoneTimer(p);
           broadcast(room, { type: 'state', state: room.state });
+          scheduleTurnTimer(room);
           return;
         }
 
@@ -201,6 +319,8 @@ app.get(
           if (!result.ok || !result.state) return send(ws, { type: 'error', message: result.error || 'Invalid move' });
           room.state = result.state;
           broadcast(room, { type: 'state', state: room.state, explosions: result.explosions });
+          if (room.state.status === 'playing') scheduleTurnTimer(room);
+          else clearTurnTimer(room);
           return;
         }
 
@@ -208,7 +328,9 @@ app.get(
           if (playerId !== room.hostId) return send(ws, { type: 'error', message: 'Only host can start rematch' });
           if (room.players.length < 2) return send(ws, { type: 'error', message: 'Need at least 2 players' });
           room.state = createGame(room.players.map((p) => ({ name: p.name })));
+          for (const p of room.players) clearGoneTimer(p);
           broadcast(room, { type: 'state', state: room.state });
+          scheduleTurnTimer(room);
           return;
         }
       },
@@ -218,9 +340,11 @@ app.get(
         const p = room.players.find((x) => x.id === playerId);
         // ignore stale socket closes after a successful rejoin
         if (p && p.ws !== ws) return;
-        if (p) p.connected = false;
+        if (!p) return;
+        p.connected = false;
         // if in lobby, remove player
         if (room.state.status === 'waiting') {
+          clearGoneTimer(p);
           room.players = room.players.filter((x) => x.id !== playerId);
           room.players.forEach((pl, i) => {
             pl.id = i;
@@ -228,14 +352,19 @@ app.get(
           });
           room.hostId = 0;
           if (room.players.length === 0) {
+            clearAllTimers(room);
             rooms.delete(room.id);
             return;
           }
           room.state = lobbyState(room);
           for (const pl of room.players) send(pl.ws, roomPayload(room, pl.id));
         } else if (room.state.status === 'playing') {
-          // transient disconnect during play: keep player in game so they can rejoin.
+          // transient disconnect during play: keep player in game so they can rejoin,
+          // but if they stay gone, remove their cells after grace period.
+          scheduleGoneTimer(room, playerId);
           broadcast(room, { type: 'state', state: room.state });
+          // ensure turn timer is running for the current turn (without resetting it)
+          scheduleTurnTimer(room);
         } else {
           broadcast(room, { type: 'state', state: room.state });
         }

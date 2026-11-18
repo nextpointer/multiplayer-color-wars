@@ -113,8 +113,9 @@ function AppInner() {
     const originColor = seatOfPlayer(pre.players[pre.currentPlayerIndex]).base;
 
     setChainLocked(true);
+    const capMs = nextState.status === 'finished' ? 12_000 : 20_000;
     try {
-      await engine.play(plan, {
+      const run = engine.play(plan, {
         metrics: {
           cell: m.cell,
           gap: m.gap,
@@ -140,7 +141,11 @@ function AppInner() {
           void play("cascade.tick", { step: wi });
         },
       });
+      await Promise.race([run, new Promise<void>((resolve) => setTimeout(resolve, capMs))]);
+    } catch {
+      // ignore animation errors and always apply final state
     } finally {
+      try { engine.clear(); } catch {}
       setDisplayState(nextState);            // authoritative final state, always
       preMoveStateRef.current = nextState;
       setChainLocked(false);

@@ -2,7 +2,9 @@ import {
   applyMove,
   createEmptyBoard,
   createGame,
+  getValidMoves,
   recommendedBoardSize,
+  removePlayerCells,
   type GameState,
   PLAYER_COLORS,
 } from '../../shared/src/index';
@@ -41,6 +43,15 @@ interface StoredRoom {
   state: GameState;
 }
 
+interface RoomMeta {
+  turnDeadline: number | null;
+  turnKey: string | null;
+  goneDeadlines: Record<string, number>;
+}
+
+const TURN_MS = 60_000;
+const GONE_MS = 60_000;
+
 function publicPlayers(room: StoredRoom) {
   return room.players.map((p) => ({ id: p.id, name: p.name, color: p.color }));
 }
@@ -66,24 +77,25 @@ function lobbyState(room: StoredRoom): GameState {
   };
 }
 
-function nextAliveIndex(state: GameState, fromIndex: number): number {
-  const n = state.players.length;
-  for (let i = 1; i <= n; i++) {
-    const idx = (fromIndex + i) % n;
-    if (state.players[idx].alive) return idx;
-  }
-  return fromIndex;
+function turnKeyOf(state: GameState): string | null {
+  if (state.status !== 'playing') return null;
+  const cur = state.players[state.currentPlayerIndex];
+  if (!cur || !cur.alive) return null;
+  return `${state.turnCount}:${state.currentPlayerIndex}:${cur.id}`;
 }
 
 export class RoomDO {
   state: DurableObjectState;
   sessions: Set<Session> = new Set();
   room: StoredRoom | null = null;
+  meta: RoomMeta = { turnDeadline: null, turnKey: null, goneDeadlines: {} };
 
   constructor(state: DurableObjectState) {
     this.state = state;
     this.state.blockConcurrencyWhile(async () => {
       this.room = (await this.state.storage.get<StoredRoom>('room')) || null;
+      this.meta = (await this.state.storage.get<RoomMeta>('meta')) || { turnDeadline: null, turnKey: null, goneDeadlines: {} };
+      if (!this.meta.goneDeadlines) this.meta.goneDeadlines = {};
     });
   }
 
@@ -114,6 +126,8 @@ export class RoomDO {
 
   private async persist() {
     if (this.room) await this.state.storage.put('room', this.room);
+    else await this.state.storage.delete('room');
+    await this.state.storage.put('meta', this.meta);
   }
 
   private send(ws: WebSocket, msg: ServerMsg) {
@@ -124,6 +138,11 @@ export class RoomDO {
     for (const s of this.sessions) {
       if (s.playerId != null) this.send(s.ws, msg);
     }
+  }
+
+  private broadcastState(explosions?: { r: number; c: number; owner: number }[]) {
+    if (!this.room) return;
+    this.broadcast({ type: 'state', state: this.room.state, explosions });
   }
 
   private roomPayload(playerId: number): ServerMsg {
@@ -138,7 +157,38 @@ export class RoomDO {
     };
   }
 
+  private clearTurnTimerMeta() {
+    this.meta.turnDeadline = null;
+    this.meta.turnKey = null;
+  }
 
+  private syncTurnTimerMeta() {
+    if (!this.room) { this.clearTurnTimerMeta(); return; }
+    const key = turnKeyOf(this.room.state);
+    if (!key) { this.clearTurnTimerMeta(); return; }
+    if (this.meta.turnKey !== key) {
+      this.meta.turnKey = key;
+      this.meta.turnDeadline = Date.now() + TURN_MS;
+    } else if (this.meta.turnDeadline == null) {
+      this.meta.turnDeadline = Date.now() + TURN_MS;
+    }
+  }
+
+  private async rescheduleAlarm() {
+    if (!this.room) {
+      await this.state.storage.deleteAlarm();
+      return;
+    }
+    const times: number[] = [];
+    if (this.meta.turnDeadline != null && this.room.state.status === 'playing') times.push(this.meta.turnDeadline);
+    for (const t of Object.values(this.meta.goneDeadlines || {})) if (typeof t === 'number') times.push(t);
+    if (times.length === 0) {
+      await this.state.storage.deleteAlarm();
+      return;
+    }
+    const next = Math.min(...times);
+    await this.state.storage.setAlarm(Math.max(Date.now() + 10, next));
+  }
 
   private async handleCreate(session: Session, roomId: string, name: string) {
     if (!this.room) {
@@ -149,16 +199,17 @@ export class RoomDO {
         state: null as any,
       };
       this.room.state = lobbyState(this.room);
+      this.meta = { turnDeadline: null, turnKey: null, goneDeadlines: {} };
       session.playerId = 0;
       await this.persist();
+      await this.rescheduleAlarm();
       this.send(session.ws, this.roomPayload(0));
       return;
     }
-    // room exists - if waiting and no one connected maybe allow? but create should be for new room
     this.send(session.ws, { type: 'error', message: 'Room already exists' });
   }
 
-  private async handleJoin(session: Session, roomId: string, name: string) {
+  private async handleJoin(session: Session, _roomId: string, name: string) {
     if (!this.room) {
       this.send(session.ws, { type: 'error', message: 'Room not found' });
       return;
@@ -176,6 +227,7 @@ export class RoomDO {
     this.room.state = lobbyState(this.room);
     session.playerId = pid;
     await this.persist();
+    await this.rescheduleAlarm();
     for (const s of this.sessions) {
       if (s.playerId != null) this.send(s.ws, this.roomPayload(s.playerId));
     }
@@ -191,7 +243,6 @@ export class RoomDO {
       this.send(session.ws, { type: 'error', message: 'Player not found in room' });
       return;
     }
-    // drop any stale sessions bound to this player
     for (const s of Array.from(this.sessions)) {
       if (s !== session && s.playerId === playerId) {
         this.sessions.delete(s);
@@ -199,8 +250,11 @@ export class RoomDO {
       }
     }
     player.connected = true;
+    delete this.meta.goneDeadlines[String(playerId)];
     session.playerId = playerId;
+    this.syncTurnTimerMeta();
     await this.persist();
+    await this.rescheduleAlarm();
     this.send(session.ws, this.roomPayload(playerId));
   }
 
@@ -211,7 +265,6 @@ export class RoomDO {
       return;
     }
 
-    // init messages (from worker proxy)
     if (msg.type === 'create') {
       const roomId = ((msg as any).roomId || '').toUpperCase().trim();
       const name = (msg.name || 'Player').trim().slice(0, 20) || 'Player';
@@ -246,8 +299,11 @@ export class RoomDO {
       if (playerId !== room.hostId) return this.send(session.ws, { type: 'error', message: 'Only host can start' });
       if (room.players.length < 2) return this.send(session.ws, { type: 'error', message: 'Need at least 2 players' });
       room.state = createGame(room.players.map((p) => ({ name: p.name })));
+      this.meta.goneDeadlines = {};
+      this.syncTurnTimerMeta();
       await this.persist();
-      this.broadcast({ type: 'state', state: room.state });
+      this.broadcastState();
+      await this.rescheduleAlarm();
       return;
     }
 
@@ -255,8 +311,10 @@ export class RoomDO {
       const result = applyMove(room.state, playerId, msg.r, msg.c);
       if (!result.ok || !result.state) return this.send(session.ws, { type: 'error', message: result.error || 'Invalid move' });
       room.state = result.state;
+      this.syncTurnTimerMeta();
       await this.persist();
-      this.broadcast({ type: 'state', state: room.state, explosions: result.explosions });
+      this.broadcastState(result.explosions);
+      await this.rescheduleAlarm();
       return;
     }
 
@@ -264,8 +322,11 @@ export class RoomDO {
       if (playerId !== room.hostId) return this.send(session.ws, { type: 'error', message: 'Only host can start rematch' });
       if (room.players.length < 2) return this.send(session.ws, { type: 'error', message: 'Need at least 2 players' });
       room.state = createGame(room.players.map((p) => ({ name: p.name })));
+      this.meta.goneDeadlines = {};
+      this.syncTurnTimerMeta();
       await this.persist();
-      this.broadcast({ type: 'state', state: room.state });
+      this.broadcastState();
+      await this.rescheduleAlarm();
       return;
     }
   }
@@ -275,7 +336,6 @@ export class RoomDO {
     if (!this.room || session.playerId == null) return;
     const room = this.room;
     const playerId = session.playerId;
-    // if player already has another active session (rejoined), ignore stale close
     for (const s of this.sessions) {
       if (s.playerId === playerId) return;
     }
@@ -284,10 +344,10 @@ export class RoomDO {
 
     if (room.state.status === 'waiting') {
       await this.state.storage.deleteAlarm();
-      // removing leaver and reindexing invalidates other session playerIds; simplest: close others to force reconnect
       room.players = room.players.filter((x) => x.id !== playerId);
       room.players.forEach((pl, i) => { pl.id = i; pl.color = PLAYER_COLORS[i]; });
       room.hostId = 0;
+      this.meta = { turnDeadline: null, turnKey: null, goneDeadlines: {} };
       if (room.players.length === 0) {
         this.room = null;
         await this.state.storage.deleteAll();
@@ -295,19 +355,86 @@ export class RoomDO {
       }
       room.state = lobbyState(room);
       await this.persist();
-      // notify and close remaining sessions so they rejoin with correct ids
       for (const s of this.sessions) {
         this.send(s.ws, { type: 'error', message: 'Lobby changed, please rejoin' });
         try { s.ws.close(); } catch {}
       }
       this.sessions.clear();
     } else if (room.state.status === 'playing') {
-      // transient disconnect during play: keep player in game so they can rejoin.
+      // keep player for rejoin, but remove their cells if they stay gone
+      this.meta.goneDeadlines[String(playerId)] = Date.now() + GONE_MS;
+      this.syncTurnTimerMeta();
       await this.persist();
-      this.broadcast({ type: 'state', state: room.state });
+      this.broadcastState();
+      await this.rescheduleAlarm();
     } else {
       await this.persist();
-      this.broadcast({ type: 'state', state: room.state });
+      this.broadcastState();
+      await this.rescheduleAlarm();
     }
+  }
+
+  async alarm(): Promise<void> {
+    if (!this.room) {
+      await this.state.storage.deleteAlarm();
+      return;
+    }
+    const now = Date.now();
+    let changed = false;
+    let lastExplosions: { r: number; c: number; owner: number }[] | undefined;
+
+    // 1) remove players who have been disconnected/gone past grace period
+    const goneIds = Object.entries(this.meta.goneDeadlines || {})
+      .filter(([, t]) => typeof t === 'number' && t <= now)
+      .map(([id]) => Number(id));
+    for (const pid of goneIds) {
+      delete this.meta.goneDeadlines[String(pid)];
+      const p = this.room.players.find((x) => x.id === pid);
+      if (!p || p.connected) continue;
+      if (this.room.state.status !== 'playing') continue;
+      this.room.state = removePlayerCells(this.room.state, pid);
+      changed = true;
+      lastExplosions = undefined;
+      if (this.room.state.status !== 'playing') break;
+    }
+
+    // 2) auto-play turn if deadline expired for the current turn
+    if (this.room.state.status === 'playing') {
+      const key = turnKeyOf(this.room.state);
+      if (key && this.meta.turnKey === key && this.meta.turnDeadline != null && this.meta.turnDeadline <= now) {
+        const current = this.room.state.players[this.room.state.currentPlayerIndex];
+        if (current && current.alive) {
+          const moves = getValidMoves(this.room.state, current.id);
+          if (moves.length > 0) {
+            const move = moves[Math.floor(Math.random() * moves.length)];
+            const result = applyMove(this.room.state, current.id, move.r, move.c);
+            if (result.ok && result.state) {
+              this.room.state = result.state;
+              lastExplosions = result.explosions;
+              changed = true;
+            } else {
+              // avoid stall: push deadline forward slightly
+              this.meta.turnDeadline = now + 5_000;
+            }
+          } else {
+            this.room.state = removePlayerCells(this.room.state, current.id);
+            lastExplosions = undefined;
+            changed = true;
+          }
+        } else {
+          changed = true;
+        }
+      }
+    }
+
+    // sync next turn deadline after any state changes
+    this.syncTurnTimerMeta();
+    if (changed) {
+      await this.persist();
+      this.broadcastState(lastExplosions);
+    } else {
+      await this.persist();
+    }
+    await this.rescheduleAlarm();
   }
 }
