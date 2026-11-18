@@ -2,6 +2,8 @@ import { motion, useReducedMotion } from "motion/react";
 import { SPRING, EASE } from "./motion";
 import { seatTilt } from "./tokens";
 
+export type ConnQuality = "good" | "ok" | "bad" | "offline";
+
 export type ScorePillProps = {
   score: number;
   color: string;
@@ -14,7 +16,18 @@ export type ScorePillProps = {
   showMiniMascot?: boolean;
   bumpKey?: number | string;
   tuckDirection?: "left" | "right" | "up" | "down";
+  connQuality?: ConnQuality;
+  pingMs?: number | null;
+  isMe?: boolean;
 };
+
+function connColor(q?: ConnQuality) {
+  if (q === "good") return "#22c55e";
+  if (q === "ok") return "#eab308";
+  if (q === "bad") return "#ef4444";
+  if (q === "offline") return "#6b7280";
+  return null;
+}
 
 export function ScorePill({
   score,
@@ -27,6 +40,9 @@ export function ScorePill({
   name,
   bumpKey,
   tuckDirection = "left",
+  connQuality,
+  pingMs,
+  isMe = false,
 }: ScorePillProps) {
   const reduce = useReducedMotion();
   const height = compact ? 44 : 56;
@@ -39,6 +55,7 @@ export function ScorePill({
         : tuckDirection === "up"
           ? { x: 0, y: -8 }
           : { x: 0, y: 8 };
+  const qColor = connColor(connQuality);
 
   return (
     <motion.div
@@ -48,20 +65,22 @@ export function ScorePill({
         opacity: tucked ? 0 : ghosted ? 0.4 : 1,
       }}
       transition={{ duration: 0.2, ease: EASE.snap }}
-      title={name}
+      title={name ? `${name}${isMe && pingMs != null ? ` • ${pingMs}ms` : ""}` : (isMe && pingMs != null ? `${pingMs}ms` : undefined)}
       aria-label={name ? `${name}: ${score}` : `Score ${score}`}
       style={{
         height,
         minWidth: compact ? 56 : 72,
-        padding: compact ? "0 14px" : "0 18px",
+        padding: compact ? "0 12px" : "0 18px",
         borderRadius: 999,
         background: "var(--cw-pill)",
         border: `${active ? 3 : 4}px solid ${active ? color : "var(--cw-outline)"}`,
+        boxShadow: qColor ? `0 0 0 3px ${qColor}55, 0 0 0 1px ${qColor}` : undefined,
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
         gap: 8,
         boxSizing: "border-box",
+        position: "relative",
       }}
     >
       <motion.span
@@ -84,6 +103,11 @@ export function ScorePill({
           {name}
         </span>
       ) : null}
+      {isMe && pingMs != null && (
+        <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", opacity: 0.9, lineHeight: 1, padding: "2px 6px", borderRadius: 999, background: "rgba(255,255,255,0.18)" }}>
+          {pingMs}ms
+        </span>
+      )}
     </motion.div>
   );
 }

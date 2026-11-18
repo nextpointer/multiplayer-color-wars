@@ -13,12 +13,16 @@ import { HomeFlow, SettingsRows } from "./screens/HomeFlow";
 import { LobbyScreen } from "./screens/LobbyScreen";
 import { GameScreen } from "./screens/GameScreen";
 import { ResultsScreen } from "./screens/ResultsScreen";
+import { useConnectionQuality, type ConnQuality } from "./hooks/useConnectionQuality";
+
+type PublicPlayer = { id: number; name: string; color: string; connected?: boolean; quality?: ConnQuality };
 
 type ServerMsg =
-  | { type: "room"; roomId: string; playerId: number; players: { id: number; name: string; color: string }[]; hostId: number; state: GameState }
-  | { type: "state"; state: GameState; explosions?: { r: number; c: number; owner: number }[] }
+  | { type: "room"; roomId: string; playerId: number; players: PublicPlayer[]; hostId: number; state: GameState }
+  | { type: "state"; state: GameState; explosions?: { r: number; c: number; owner: number }[]; players?: PublicPlayer[] }
+  | { type: "presence"; players: PublicPlayer[] }
   | { type: "error"; message: string }
-  | { type: "pong" };
+  | { type: "pong"; ts?: number };
 
 function wsUrl() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -59,7 +63,7 @@ function AppInner() {
   const [roomId, setRoomId] = useState<string | null>(null);
   const [playerId, setPlayerId] = useState<number | null>(null);
   const [hostId, setHostId] = useState<number | null>(null);
-  const [lobbyPlayers, setLobbyPlayers] = useState<{ id: number; name: string; color: string }[]>([]);
+  const [lobbyPlayers, setLobbyPlayers] = useState<PublicPlayer[]>([]);
   const [serverState, setServerState] = useState<GameState | null>(null);
   const [displayState, setDisplayState] = useState<GameState | null>(null);
   const [homeView, setHomeView] = useState<"landing" | "howto" | "create" | "join">("landing");
@@ -86,6 +90,9 @@ function AppInner() {
   const pingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const reconnectAttemptRef = useRef(0);
   const shouldReconnectRef = useRef(true);
+  const intentionallyLeavingRef = useRef(false);
+  const animatingRef = useRef(false);
+  const conn = useConnectionQuality();
 
   useEffect(() => { displayStateRef.current = displayState; }, [displayState]);
   useEffect(() => { serverStateRef.current = serverState; }, [serverState]);
@@ -114,6 +121,7 @@ function AppInner() {
     const originColor = seatOfPlayer(pre.players[pre.currentPlayerIndex]).base;
 
     const token = ++animTokenRef.current;
+    animatingRef.current = true;
     setChainLocked(true);
     const capMs = nextState.status === 'finished' ? 12_000 : 20_000;
     try {
@@ -154,6 +162,7 @@ function AppInner() {
         setDisplayState(nextState);            // authoritative final state, always
         preMoveStateRef.current = nextState;
         setChainLocked(false);
+        animatingRef.current = false;
       }
     }
   }, [settings.chainSpeed, reduced]);
@@ -193,10 +202,19 @@ function AppInner() {
         setConnected(true);
         setDisconnectedNotice(false);
         reconnectAttemptRef.current = 0;
+        conn.onConnected();
         if (pingTimerRef.current) clearInterval(pingTimerRef.current);
-        pingTimerRef.current = setInterval(() => {
-          try { if (wsRef.current === ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ping" })); } catch {}
-        }, 20000);
+        const sendPing = () => {
+          try {
+            if (wsRef.current === ws && ws.readyState === WebSocket.OPEN) {
+              const ts = performance.now();
+              conn.markPingSent(ts);
+              ws.send(JSON.stringify({ type: "ping", ts }));
+            }
+          } catch {}
+        };
+        sendPing();
+        pingTimerRef.current = setInterval(sendPing, 5000);
         const s = sessionRef.current;
         if (s) {
           try { ws.send(JSON.stringify({ type: "rejoin", roomId: s.roomId, playerId: s.playerId, name: s.name })); } catch {}
@@ -206,8 +224,9 @@ function AppInner() {
       ws.onclose = () => {
         if (wsRef.current !== ws) return;
         setConnected(false);
+        conn.onDisconnected();
         if (pingTimerRef.current) { clearInterval(pingTimerRef.current); pingTimerRef.current = null; }
-        scheduleReconnect();
+        if (!intentionallyLeavingRef.current) scheduleReconnect();
       };
 
       ws.onerror = () => {
@@ -217,9 +236,23 @@ function AppInner() {
 
       ws.onmessage = (ev) => {
         if (wsRef.current !== ws) return;
-        let msg: ServerMsg | { type: "pong" };
+        let msg: ServerMsg;
         try { msg = JSON.parse(ev.data); } catch { return; }
-        if ((msg as any).type === "pong") return;
+        if (msg.type === "pong") {
+          const res = conn.onPong(msg.ts);
+          if (res) {
+            send({ type: "quality", quality: res.quality, rtt: res.rtt });
+          }
+          return;
+        }
+        if (msg.type === "presence") {
+          conn.onPlayers(msg.players);
+          setLobbyPlayers((prev) => prev.map(p => {
+            const np = msg.players.find(x => x.id === p.id);
+            return np ? { ...p, connected: np.connected, quality: np.quality } : p;
+          }));
+          return;
+        }
         if (msg.type === "error") {
           const m = msg.message || "Error";
           // If rejoin/session is no longer valid, reset so user can start over.
@@ -245,7 +278,8 @@ function AppInner() {
           setRoomId(msg.roomId);
           setPlayerId(msg.playerId);
           setHostId(msg.hostId);
-          setLobbyPlayers(msg.players);
+          setLobbyPlayers(msg.players || []);
+          if (msg.players) conn.onPlayers(msg.players);
           setServerState(msg.state);
           setDisplayState(msg.state);
           preMoveStateRef.current = msg.state;
@@ -255,17 +289,29 @@ function AppInner() {
         }
         if (msg.type === "state") {
           const prev = preMoveStateRef.current || displayStateRef.current || serverStateRef.current;
-          setLobbyPlayers(msg.state.players.map(p => ({ id: p.id, name: p.name, color: p.color })));
+          const incomingPlayers = (msg.players ? msg.players : msg.state.players.map(p => ({
+            id: p.id, name: p.name, color: p.color, connected: undefined as any, quality: undefined as any,
+          }))) as PublicPlayer[];
+          setLobbyPlayers((lpPrev) => {
+            if (msg.players) return msg.players as any;
+            return incomingPlayers.map((p) => {
+              const old = lpPrev.find(x => x.id === p.id);
+              return { ...p, connected: old?.connected, quality: old?.quality };
+            }) as any;
+          });
+          if (msg.players) conn.onPlayers(msg.players);
           const pending = pendingMoveRef.current;
           pendingMoveRef.current = null;
 
           const applyImmediate = (s: GameState) => {
+            animatingRef.current = false;
             animTokenRef.current++;
             flightRef.current?.clear();
             setServerState(s);
             setDisplayState(s);
             preMoveStateRef.current = s;
             setChainLocked(false);
+            prevTurnRef.current = s.players[s.currentPlayerIndex]?.id ?? null;
           };
 
           const boardsEqual = (a: GameState, b: GameState) => {
@@ -277,12 +323,16 @@ function AppInner() {
             return true;
           };
 
-          // Fresh game/rematch or authoritative reset (e.g. after rejoin): apply immediately.
+          // Fresh game/rematch or authoritative reset (e.g. after rejoin/rematch-to-lobby): apply immediately.
           const isFreshGame = msg.state.status === "playing" && msg.state.turnCount === 0 && (!msg.explosions || msg.explosions.length === 0);
           const statusChanged = !!prev && prev.status !== msg.state.status;
           if (isFreshGame || (statusChanged && msg.state.status === "waiting")) {
             applyImmediate(msg.state);
-            prevTurnRef.current = msg.state.players[msg.state.currentPlayerIndex]?.id ?? null;
+            return;
+          }
+          // If a player leaves/disconnects and game ends, stop any ongoing animation and show result immediately.
+          if (msg.state.status === "finished" && statusChanged && (!msg.explosions || msg.explosions.length === 0) && animatingRef.current) {
+            applyImmediate(msg.state);
             return;
           }
 
@@ -307,7 +357,12 @@ function AppInner() {
           };
 
           if (prev) {
-            if (prev.rows !== msg.state.rows || prev.cols !== msg.state.cols || prev.status !== msg.state.status) {
+            if (prev.rows !== msg.state.rows || prev.cols !== msg.state.cols) {
+              applyImmediate(msg.state);
+              return;
+            }
+            // Status transitions that aren't a playable move animation: apply immediately.
+            if (prev.status !== msg.state.status && msg.state.status === "waiting") {
               applyImmediate(msg.state);
               return;
             }
@@ -320,10 +375,20 @@ function AppInner() {
               move = findMoveByDiff(prev, msg.state);
             }
             if (!move) {
-              applyImmediate(msg.state);
+              // No identifiable move (e.g. player left and cells vanished). Apply authoritative state.
+              if (animatingRef.current && msg.state.status === "playing") {
+                // Out-of-band update during animation (rare). Stop and resync to avoid stale visuals.
+                applyImmediate(msg.state);
+              } else {
+                applyImmediate(msg.state);
+              }
               return;
             }
             const plan = deriveMovePlan({ rows: prev.rows, cols: prev.cols, preBoard: prev.board, playerId: moverId, r: move.r, c: move.c, explosions: msg.explosions || [] });
+            if (plan.waves.length === 0 && prev.status !== msg.state.status) {
+              // state changed without animation-worthy waves (e.g. removal leading to finish) - apply immediately
+              // but still prefer showing final state; if finished we can just apply.
+            }
             // If the game ends, keep showing/animating the final move before revealing results.
             if (msg.state.status === "finished" && plan.waves.length > 0) {
               setServerState(prev);
@@ -467,6 +532,9 @@ function AppInner() {
           onQuit={() => setShowQuit(true)}
           onOpenSettings={() => setShowSettings(true)}
           settings={settings}
+          playersConn={conn.playersConn}
+          myRtt={conn.myRtt}
+          myQuality={conn.myQuality}
         />
       )}
       {serverState.status === "finished" && (
@@ -481,7 +549,12 @@ function AppInner() {
         <div className="cw-body" style={{ color: "var(--cw-ink-soft)", marginBottom: 16 }}>You'll give up your cells.</div>
         <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
           <button onClick={() => setShowQuit(false)} style={{ height: 48, padding: "0 24px", borderRadius: 999, border: "3px dashed var(--cw-ink-soft)", background: "transparent", color: "var(--cw-ink)", fontWeight: 700 }}>Stay</button>
-          <PrimaryPillButton label="Leave" onClick={() => { setShowQuit(false); window.location.reload(); }} />
+          <PrimaryPillButton label="Leave" onClick={() => {
+            setShowQuit(false);
+            intentionallyLeavingRef.current = true;
+            try { send({ type: "leave" }); } catch {}
+            setTimeout(() => window.location.reload(), 120);
+          }} />
         </div>
       </Modal>
     </>

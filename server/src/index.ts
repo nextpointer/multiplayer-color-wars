@@ -13,6 +13,8 @@ import {
   PLAYER_COLORS,
 } from '@game/shared';
 
+type ConnQuality = 'good' | 'ok' | 'bad' | 'offline';
+
 type ClientMsg =
   | { type: 'create'; name: string }
   | { type: 'join'; roomId: string; name: string }
@@ -20,21 +22,29 @@ type ClientMsg =
   | { type: 'start' }
   | { type: 'move'; r: number; c: number }
   | { type: 'rematch' }
-  | { type: 'ping' };
+  | { type: 'leave' }
+  | { type: 'ping'; ts?: number }
+  | { type: 'quality'; quality: ConnQuality; rtt?: number };
+
+type PublicPlayer = { id: number; name: string; color: string; connected: boolean; quality: ConnQuality };
 
 type ServerMsg =
-  | { type: 'room'; roomId: string; playerId: number; players: { id: number; name: string; color: string }[]; hostId: number; state: GameState }
-  | { type: 'state'; state: GameState; explosions?: { r: number; c: number; owner: number }[] }
+  | { type: 'room'; roomId: string; playerId: number; players: PublicPlayer[]; hostId: number; state: GameState }
+  | { type: 'state'; state: GameState; explosions?: { r: number; c: number; owner: number }[]; players?: PublicPlayer[] }
+  | { type: 'presence'; players: PublicPlayer[] }
   | { type: 'error'; message: string }
-  | { type: 'pong' };
+  | { type: 'pong'; ts?: number };
 
 interface RoomPlayer {
   id: number;
   name: string;
   color: string;
-  ws: WSContext;
+  ws: WSContext | null;
   connected: boolean;
-  disconnectTimer?: ReturnType<typeof setTimeout> | null;
+  quality: ConnQuality;
+  rtt: number | null;
+  lastSeen: number;
+  removed: boolean; // left/removed from active play
 }
 
 interface Room {
@@ -49,7 +59,6 @@ interface Room {
 
 const rooms = new Map<string, Room>();
 const TURN_MS = 3 * 60_000;
-const GONE_MS = 3 * 60_000;
 
 function turnKeyOf(state: GameState): string | null {
   if (state.status !== 'playing') return null;
@@ -65,20 +74,28 @@ function makeId(len = 5) {
   return s;
 }
 
-function send(ws: WSContext, msg: ServerMsg) {
-  try {
-    ws.send(JSON.stringify(msg));
-  } catch {}
+function send(ws: WSContext | null | undefined, msg: ServerMsg) {
+  try { ws?.send(JSON.stringify(msg)); } catch {}
+}
+
+function publicPlayers(room: Room): PublicPlayer[] {
+  return room.players.map((p) => ({
+    id: p.id,
+    name: p.name,
+    color: p.color,
+    connected: p.connected,
+    quality: p.connected ? p.quality : 'offline',
+  }));
 }
 
 function broadcast(room: Room, msg: ServerMsg) {
   for (const p of room.players) {
-    if (p.connected) send(p.ws, msg);
+    if (p.connected && p.ws) send(p.ws, msg);
   }
 }
 
-function publicPlayers(room: Room) {
-  return room.players.map((p) => ({ id: p.id, name: p.name, color: p.color }));
+function broadcastPresence(room: Room) {
+  broadcast(room, { type: 'presence', players: publicPlayers(room) });
 }
 
 function roomPayload(room: Room, playerId: number): ServerMsg {
@@ -90,6 +107,12 @@ function roomPayload(room: Room, playerId: number): ServerMsg {
     hostId: room.hostId,
     state: room.state,
   };
+}
+
+function broadcastRoom(room: Room) {
+  for (const p of room.players) {
+    if (p.connected && p.ws) send(p.ws, roomPayload(room, p.id));
+  }
 }
 
 function lobbyState(room: Room): GameState {
@@ -122,16 +145,8 @@ function clearTurnTimer(room: Room) {
   room.turnKey = null;
 }
 
-function clearGoneTimer(p: RoomPlayer) {
-  if (p.disconnectTimer) {
-    clearTimeout(p.disconnectTimer);
-    p.disconnectTimer = null;
-  }
-}
-
 function clearAllTimers(room: Room) {
   clearTurnTimer(room);
-  for (const p of room.players) clearGoneTimer(p);
 }
 
 function scheduleTurnTimer(room: Room) {
@@ -151,7 +166,7 @@ function scheduleTurnTimer(room: Room) {
 }
 
 function broadcastState(room: Room, explosions?: { r: number; c: number; owner: number }[]) {
-  broadcast(room, { type: 'state', state: room.state, explosions });
+  broadcast(room, { type: 'state', state: room.state, explosions, players: publicPlayers(room) });
 }
 
 function autoPlayTurn(room: Room, token: number) {
@@ -165,7 +180,6 @@ function autoPlayTurn(room: Room, token: number) {
   }
   const moves = getValidMoves(room.state, current.id);
   if (moves.length === 0) {
-    // should be rare; avoid stalling by removing player's cells as a fallback
     room.state = removePlayerCells(room.state, current.id);
     broadcastState(room);
     if (room.state.status === 'playing') scheduleTurnTimer(room);
@@ -175,7 +189,6 @@ function autoPlayTurn(room: Room, token: number) {
   const move = moves[Math.floor(Math.random() * moves.length)];
   const result = applyMove(room.state, current.id, move.r, move.c);
   if (!result.ok || !result.state) {
-    // fallback: try not to stall
     scheduleTurnTimer(room);
     return;
   }
@@ -185,36 +198,51 @@ function autoPlayTurn(room: Room, token: number) {
   else clearTurnTimer(room);
 }
 
-function removeGonePlayer(room: Room, playerId: number) {
+function removeActivePlayer(room: Room, playerId: number, opts?: { closeSocket?: boolean }) {
   if (!rooms.has(room.id)) return;
   const p = room.players.find((x) => x.id === playerId);
   if (!p) return;
-  clearGoneTimer(p);
-  // if they reconnected somehow, don't remove
-  if (p.connected) return;
-  if (room.state.status !== 'playing') return;
+  if (p.removed) return;
+  p.removed = true;
+  p.connected = false;
+  p.quality = 'offline';
 
-  const beforeIndex = room.state.currentPlayerIndex;
-  room.state = removePlayerCells(room.state, playerId);
-  broadcastState(room);
-  if (room.state.status !== 'playing') {
-    clearTurnTimer(room);
+  if (room.state.status === 'waiting') {
+    // remove from lobby and reindex
+    const closing = p.ws;
+    room.players = room.players.filter((x) => x.id !== playerId);
+    room.players.forEach((pl, i) => { pl.id = i; pl.color = PLAYER_COLORS[i]; pl.removed = false; });
+    room.hostId = 0;
+    if (room.players.length === 0) {
+      clearAllTimers(room);
+      rooms.delete(room.id);
+      if (opts?.closeSocket) try { closing?.close(); } catch {}
+      return;
+    }
+    room.state = lobbyState(room);
+    for (const pl of room.players) {
+      if (pl.ws) send(pl.ws, roomPayload(room, pl.id));
+    }
+    if (opts?.closeSocket) try { closing?.close(); } catch {}
     return;
   }
-  // turn may have changed (if it was their turn or they were current), reschedule safely
-  scheduleTurnTimer(room);
-  // ensure we didn't leave a stale timer token state issue
-  void beforeIndex;
+
+  if (room.state.status === 'playing') {
+    room.state = removePlayerCells(room.state, playerId);
+    broadcastState(room);
+    if (room.state.status === 'playing') scheduleTurnTimer(room);
+    else clearTurnTimer(room);
+  } else {
+    broadcastState(room);
+  }
+
+  if (opts?.closeSocket) try { p.ws?.close(); } catch {}
+  p.ws = null;
 }
 
-function scheduleGoneTimer(room: Room, playerId: number) {
-  const p = room.players.find((x) => x.id === playerId);
-  if (!p) return;
-  clearGoneTimer(p);
-  p.disconnectTimer = setTimeout(() => {
-    p.disconnectTimer = null;
-    removeGonePlayer(room, playerId);
-  }, GONE_MS);
+function reindexLobbyAfterLeave(room: Room, leaverId: number) {
+  // legacy path not used; removeActivePlayer handles lobby
+  void leaverId;
 }
 
 const app = new Hono();
@@ -250,7 +278,7 @@ app.get(
             turnToken: 0,
             turnKey: null,
           };
-          const player: RoomPlayer = { id: 0, name, color: PLAYER_COLORS[0], ws, connected: true, disconnectTimer: null };
+          const player: RoomPlayer = { id: 0, name, color: PLAYER_COLORS[0], ws, connected: true, quality: 'good', rtt: null, lastSeen: Date.now(), removed: false };
           room.players.push(player);
           room.state = lobbyState(room);
           rooms.set(id, room);
@@ -268,12 +296,12 @@ app.get(
           if (room.state.status !== 'waiting') return send(ws, { type: 'error', message: 'Game already started' });
           if (room.players.length >= 8) return send(ws, { type: 'error', message: 'Room is full (max 8 players)' });
           const pid = room.players.length;
-          const player: RoomPlayer = { id: pid, name, color: PLAYER_COLORS[pid], ws, connected: true, disconnectTimer: null };
+          const player: RoomPlayer = { id: pid, name, color: PLAYER_COLORS[pid], ws, connected: true, quality: 'good', rtt: null, lastSeen: Date.now(), removed: false };
           room.players.push(player);
           room.state = lobbyState(room);
           currentRoom = room;
           playerId = pid;
-          for (const p of room.players) send(p.ws, roomPayload(room, p.id));
+          broadcastRoom(room);
           return;
         }
 
@@ -284,41 +312,74 @@ app.get(
           const pid = Number(msg.playerId);
           const player = room.players.find((p) => p.id === pid);
           if (!player) return send(ws, { type: 'error', message: 'Player not found in room' });
+          if (player.removed && room.state.status === 'playing') {
+            // player left/cells vanished; allow sync but they remain out
+          }
           player.ws = ws;
-          player.connected = true;
-          clearGoneTimer(player);
+          player.connected = !player.removed || room.state.status !== 'playing' ? true : player.connected;
+          // if they were removed during play, keep them as removed/offline in gameplay terms
+          if (player.removed && room.state.status === 'playing') {
+            player.connected = true; // socket connected for receiving updates/spectating
+          }
+          player.lastSeen = Date.now();
+          if (!player.removed) player.quality = player.quality === 'offline' ? 'good' : player.quality;
           currentRoom = room;
           playerId = pid;
-          // if game is playing, ensure turn timer is running for current turn
           if (room.state.status === 'playing') scheduleTurnTimer(room);
           send(ws, roomPayload(room, pid));
+          broadcastPresence(room);
           return;
         }
 
         if (msg.type === 'ping') {
-          return send(ws, { type: 'pong' });
+          if (currentRoom && playerId != null) {
+            const p = currentRoom.players.find(x => x.id === playerId);
+            if (p) p.lastSeen = Date.now();
+          }
+          return send(ws, { type: 'pong', ts: msg.ts });
+        }
+
+        if (msg.type === 'quality') {
+          if (!currentRoom || playerId == null) return;
+          const p = currentRoom.players.find(x => x.id === playerId);
+          if (!p) return;
+          if (msg.quality === 'good' || msg.quality === 'ok' || msg.quality === 'bad') p.quality = msg.quality;
+          if (typeof msg.rtt === 'number') p.rtt = msg.rtt;
+          p.lastSeen = Date.now();
+          broadcastPresence(currentRoom);
+          return;
         }
 
         if (!currentRoom || playerId == null) {
           return send(ws, { type: 'error', message: 'Join or create a room first' });
         }
         const room = currentRoom;
+        const me = room.players.find(p => p.id === playerId);
+        if (me) me.lastSeen = Date.now();
+
+        if (msg.type === 'leave') {
+          removeActivePlayer(room, playerId, { closeSocket: false });
+          try { ws.close(); } catch {}
+          return;
+        }
 
         if (msg.type === 'start') {
           if (playerId !== room.hostId) return send(ws, { type: 'error', message: 'Only host can start' });
           if (room.players.length < 2) return send(ws, { type: 'error', message: 'Need at least 2 players' });
           room.state = createGame(room.players.map((p) => ({ name: p.name })));
-          for (const p of room.players) clearGoneTimer(p);
-          broadcast(room, { type: 'state', state: room.state });
+          for (const p of room.players) { p.removed = false; if (p.connected) p.quality = p.quality === 'offline' ? 'good' : p.quality; }
+          broadcastState(room);
           scheduleTurnTimer(room);
           return;
         }
 
         if (msg.type === 'move') {
+          const playerRec = room.players.find(p => p.id === playerId);
+          if (playerRec?.removed) return send(ws, { type: 'error', message: 'You left the game' });
           const result = applyMove(room.state, playerId, msg.r, msg.c);
           if (!result.ok || !result.state) return send(ws, { type: 'error', message: result.error || 'Invalid move' });
           room.state = result.state;
-          broadcast(room, { type: 'state', state: room.state, explosions: result.explosions });
+          broadcastState(room, result.explosions);
           if (room.state.status === 'playing') scheduleTurnTimer(room);
           else clearTurnTimer(room);
           return;
@@ -327,10 +388,10 @@ app.get(
         if (msg.type === 'rematch') {
           if (playerId !== room.hostId) return send(ws, { type: 'error', message: 'Only host can start rematch' });
           if (room.players.length < 2) return send(ws, { type: 'error', message: 'Need at least 2 players' });
-          room.state = createGame(room.players.map((p) => ({ name: p.name })));
-          for (const p of room.players) clearGoneTimer(p);
-          broadcast(room, { type: 'state', state: room.state });
-          scheduleTurnTimer(room);
+          clearTurnTimer(room);
+          for (const p of room.players) { p.removed = false; if (p.connected) p.quality = p.quality === 'offline' ? 'good' : p.quality; }
+          room.state = lobbyState(room);
+          broadcastRoom(room);
           return;
         }
       },
@@ -341,33 +402,23 @@ app.get(
         // ignore stale socket closes after a successful rejoin
         if (p && p.ws !== ws) return;
         if (!p) return;
-        p.connected = false;
-        // if in lobby, remove player
+
         if (room.state.status === 'waiting') {
-          clearGoneTimer(p);
-          room.players = room.players.filter((x) => x.id !== playerId);
-          room.players.forEach((pl, i) => {
-            pl.id = i;
-            pl.color = PLAYER_COLORS[i];
-          });
-          room.hostId = 0;
-          if (room.players.length === 0) {
-            clearAllTimers(room);
-            rooms.delete(room.id);
-            return;
-          }
-          room.state = lobbyState(room);
-          for (const pl of room.players) send(pl.ws, roomPayload(room, pl.id));
-        } else if (room.state.status === 'playing') {
-          // transient disconnect during play: keep player in game so they can rejoin,
-          // but if they stay gone, remove their cells after grace period.
-          scheduleGoneTimer(room, playerId);
-          broadcast(room, { type: 'state', state: room.state });
-          // ensure turn timer is running for the current turn (without resetting it)
-          scheduleTurnTimer(room);
-        } else {
-          broadcast(room, { type: 'state', state: room.state });
+          removeActivePlayer(room, playerId, { closeSocket: false });
+          return;
         }
+
+        if (room.state.status === 'playing') {
+          // player left/disconnected: vanish their cells immediately
+          p.ws = null;
+          removeActivePlayer(room, playerId, { closeSocket: false });
+          return;
+        }
+
+        p.connected = false;
+        p.quality = 'offline';
+        p.ws = null;
+        broadcastPresence(room);
       },
     };
   })

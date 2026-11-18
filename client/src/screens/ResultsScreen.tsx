@@ -61,16 +61,18 @@ export function ResultsScreen(props: {
           ))}
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "center", width: "100%" }}>
-          <div className="cw-body" style={{ color: SURFACES.ink, marginBottom: 2 }}>Rematch?</div>
+          <div className="cw-body" style={{ color: SURFACES.ink, marginBottom: 2 }}>Play again in the same room?</div>
           {isHost ? (
-            <PrimaryPillButton label="REMATCH" onClick={onRematch} />
+            <PrimaryPillButton label="BACK TO LOBBY" onClick={onRematch} />
           ) : (
             <>
-              <PrimaryPillButton label="REQUEST REMATCH" onClick={onRematch} />
-              <div className="cw-caption" style={{ color: SURFACES.inkSoft }}>Host can start the rematch</div>
+              <div style={{ width: "min(100%, 280px)", height: 54, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 24px", borderRadius: 999, background: "rgba(255,255,255,0.35)", color: SURFACES.ink, fontWeight: 700, fontSize: 17 }}>
+                Waiting for host…
+              </div>
+              <div className="cw-caption" style={{ color: SURFACES.inkSoft }}>Host can take everyone back to the lobby</div>
             </>
           )}
-          <button onClick={onLobby} style={{ width: "min(100%, 280px)", height: 54, padding: "0 24px", borderRadius: 999, border: "3px dashed var(--cw-ink-soft)", background: "rgba(255,255,255,0.25)", color: SURFACES.ink, fontWeight: 700, fontSize: 17, cursor: "pointer" }}>Lobby</button>
+          <button onClick={onLobby} style={{ width: "min(100%, 280px)", height: 54, padding: "0 24px", borderRadius: 999, border: "3px dashed var(--cw-ink-soft)", background: "rgba(255,255,255,0.25)", color: SURFACES.ink, fontWeight: 700, fontSize: 17, cursor: "pointer" }}>Leave</button>
         </div>
       </motion.div>
     </div>

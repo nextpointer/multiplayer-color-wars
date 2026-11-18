@@ -1,6 +1,6 @@
 import React, { useMemo, useRef } from "react";
 import type { GameState } from "@game/shared";
-import { ScorePill } from "../design/ScorePill";
+import { ScorePill, type ConnQuality } from "../design/ScorePill";
 import { QuitButton } from "../design/QuitButton";
 import { IconButton } from "../design/IconButton";
 import { Z, visualsForPlayer } from "../design/tokens";
@@ -25,8 +25,11 @@ export function GameScreen(props: {
   onMove: (r:number,c:number)=>void; onQuit: ()=>void; onOpenSettings: ()=>void;
   onMetrics?: (m: { cell: number; gap: number }) => void;
   settings: Settings;
+  playersConn?: Record<number, { connected: boolean; quality: ConnQuality }>;
+  myRtt?: number | null;
+  myQuality?: ConnQuality;
 }) {
-  const { state, playerId, myTurn, chainLocked, flightRef, bumpKeys, onMove, onQuit, onOpenSettings, onMetrics } = props;
+  const { state, playerId, myTurn, chainLocked, flightRef, bumpKeys, onMove, onQuit, onOpenSettings, onMetrics, playersConn, myRtt, myQuality } = props;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const { width: vw, height: vh, forceLandscape } = useViewport();
   const landscape = vw >= vh;
@@ -46,9 +49,12 @@ export function GameScreen(props: {
 
   const renderPill = (s: {p:any;score:number;seat:any}, edge:"top"|"left") => {
     const active = s.p.id === current?.id;
+    const isMe = s.p.id === playerId;
+    const conn = isMe ? { connected: true, quality: myQuality || "good" } : playersConn?.[s.p.id];
     return (
       <ScorePill key={s.p.id} score={s.score} color={s.seat.base} seatIndex={s.p.id} active={active && !chainLocked}
-        tucked={false} ghosted={!s.p.alive} compact={true} name={s.p.name} bumpKey={bumpKeys[s.p.id]||0} tuckDirection={edge === "top" ? "up" : "right"} />
+        tucked={false} ghosted={!s.p.alive} compact={true} name={s.p.name} bumpKey={bumpKeys[s.p.id]||0} tuckDirection={edge === "top" ? "up" : "right"}
+        connQuality={conn?.quality} pingMs={isMe ? (myRtt ?? null) : null} isMe={isMe} />
     );
   };
 

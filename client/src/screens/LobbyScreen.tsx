@@ -13,7 +13,7 @@ import type { Settings } from "../state/settings";
 
 export function LobbyScreen(props: {
   roomId: string;
-  players: { id: number; name: string; color: string }[];
+  players: { id: number; name: string; color: string; connected?: boolean; quality?: "good" | "ok" | "bad" | "offline" }[];
   hostId: number | null;
   playerId: number | null;
   onStart: () => void;

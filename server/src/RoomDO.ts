@@ -9,6 +9,8 @@ import {
   PLAYER_COLORS,
 } from '../../shared/src/index';
 
+type ConnQuality = 'good' | 'ok' | 'bad' | 'offline';
+
 type ClientMsg =
   | { type: 'create'; name: string; roomId?: string }
   | { type: 'join'; roomId: string; name: string }
@@ -16,13 +18,18 @@ type ClientMsg =
   | { type: 'start' }
   | { type: 'move'; r: number; c: number }
   | { type: 'rematch' }
-  | { type: 'ping' };
+  | { type: 'leave' }
+  | { type: 'ping'; ts?: number }
+  | { type: 'quality'; quality: ConnQuality; rtt?: number };
+
+type PublicPlayer = { id: number; name: string; color: string; connected: boolean; quality: ConnQuality };
 
 type ServerMsg =
-  | { type: 'room'; roomId: string; playerId: number; players: { id: number; name: string; color: string }[]; hostId: number; state: GameState }
-  | { type: 'state'; state: GameState; explosions?: { r: number; c: number; owner: number }[] }
+  | { type: 'room'; roomId: string; playerId: number; players: PublicPlayer[]; hostId: number; state: GameState }
+  | { type: 'state'; state: GameState; explosions?: { r: number; c: number; owner: number }[]; players?: PublicPlayer[] }
+  | { type: 'presence'; players: PublicPlayer[] }
   | { type: 'error'; message: string }
-  | { type: 'pong' };
+  | { type: 'pong'; ts?: number };
 
 interface Session {
   ws: WebSocket;
@@ -34,6 +41,8 @@ interface StoredPlayer {
   name: string;
   color: string;
   connected: boolean;
+  quality?: ConnQuality;
+  removed?: boolean;
 }
 
 interface StoredRoom {
@@ -46,14 +55,22 @@ interface StoredRoom {
 interface RoomMeta {
   turnDeadline: number | null;
   turnKey: string | null;
-  goneDeadlines: Record<string, number>;
 }
 
 const TURN_MS = 3 * 60_000;
-const GONE_MS = 3 * 60_000;
 
-function publicPlayers(room: StoredRoom) {
-  return room.players.map((p) => ({ id: p.id, name: p.name, color: p.color }));
+function normQuality(q: any): ConnQuality {
+  return q === 'good' || q === 'ok' || q === 'bad' ? q : 'good';
+}
+
+function publicPlayers(room: StoredRoom): PublicPlayer[] {
+  return room.players.map((p) => ({
+    id: p.id,
+    name: p.name,
+    color: p.color,
+    connected: !!p.connected,
+    quality: p.connected ? normQuality(p.quality) : 'offline',
+  }));
 }
 
 function lobbyState(room: StoredRoom): GameState {
@@ -88,14 +105,23 @@ export class RoomDO {
   state: DurableObjectState;
   sessions: Set<Session> = new Set();
   room: StoredRoom | null = null;
-  meta: RoomMeta = { turnDeadline: null, turnKey: null, goneDeadlines: {} };
+  meta: RoomMeta = { turnDeadline: null, turnKey: null };
 
   constructor(state: DurableObjectState) {
     this.state = state;
     this.state.blockConcurrencyWhile(async () => {
       this.room = (await this.state.storage.get<StoredRoom>('room')) || null;
-      this.meta = (await this.state.storage.get<RoomMeta>('meta')) || { turnDeadline: null, turnKey: null, goneDeadlines: {} };
-      if (!this.meta.goneDeadlines) this.meta.goneDeadlines = {};
+      const m = (await this.state.storage.get<any>('meta')) || null;
+      this.meta = {
+        turnDeadline: m?.turnDeadline ?? null,
+        turnKey: m?.turnKey ?? null,
+      };
+      if (this.room) {
+        for (const p of this.room.players) {
+          if (!p.quality) p.quality = p.connected ? 'good' : 'offline';
+          if (p.removed == null) p.removed = false;
+        }
+      }
     });
   }
 
@@ -142,7 +168,12 @@ export class RoomDO {
 
   private broadcastState(explosions?: { r: number; c: number; owner: number }[]) {
     if (!this.room) return;
-    this.broadcast({ type: 'state', state: this.room.state, explosions });
+    this.broadcast({ type: 'state', state: this.room.state, explosions, players: publicPlayers(this.room) });
+  }
+
+  private broadcastPresence() {
+    if (!this.room) return;
+    this.broadcast({ type: 'presence', players: publicPlayers(this.room) });
   }
 
   private roomPayload(playerId: number): ServerMsg {
@@ -155,6 +186,13 @@ export class RoomDO {
       hostId: room.hostId,
       state: room.state,
     };
+  }
+
+  private broadcastRoom() {
+    if (!this.room) return;
+    for (const s of this.sessions) {
+      if (s.playerId != null) this.send(s.ws, this.roomPayload(s.playerId));
+    }
   }
 
   private clearTurnTimerMeta() {
@@ -179,15 +217,18 @@ export class RoomDO {
       await this.state.storage.deleteAlarm();
       return;
     }
-    const times: number[] = [];
-    if (this.meta.turnDeadline != null && this.room.state.status === 'playing') times.push(this.meta.turnDeadline);
-    for (const t of Object.values(this.meta.goneDeadlines || {})) if (typeof t === 'number') times.push(t);
-    if (times.length === 0) {
-      await this.state.storage.deleteAlarm();
+    if (this.meta.turnDeadline != null && this.room.state.status === 'playing') {
+      await this.state.storage.setAlarm(Math.max(Date.now() + 10, this.meta.turnDeadline));
       return;
     }
-    const next = Math.min(...times);
-    await this.state.storage.setAlarm(Math.max(Date.now() + 10, next));
+    await this.state.storage.deleteAlarm();
+  }
+
+  private hasOtherSession(playerId: number, except?: Session) {
+    for (const s of this.sessions) {
+      if (s !== except && s.playerId === playerId) return true;
+    }
+    return false;
   }
 
   private async handleCreate(session: Session, roomId: string, name: string) {
@@ -195,11 +236,11 @@ export class RoomDO {
       this.room = {
         id: roomId,
         hostId: 0,
-        players: [{ id: 0, name, color: PLAYER_COLORS[0], connected: true }],
+        players: [{ id: 0, name, color: PLAYER_COLORS[0], connected: true, quality: 'good', removed: false }],
         state: null as any,
       };
       this.room.state = lobbyState(this.room);
-      this.meta = { turnDeadline: null, turnKey: null, goneDeadlines: {} };
+      this.meta = { turnDeadline: null, turnKey: null };
       session.playerId = 0;
       await this.persist();
       await this.rescheduleAlarm();
@@ -223,14 +264,12 @@ export class RoomDO {
       return;
     }
     const pid = this.room.players.length;
-    this.room.players.push({ id: pid, name, color: PLAYER_COLORS[pid], connected: true });
+    this.room.players.push({ id: pid, name, color: PLAYER_COLORS[pid], connected: true, quality: 'good', removed: false });
     this.room.state = lobbyState(this.room);
     session.playerId = pid;
     await this.persist();
     await this.rescheduleAlarm();
-    for (const s of this.sessions) {
-      if (s.playerId != null) this.send(s.ws, this.roomPayload(s.playerId));
-    }
+    this.broadcastRoom();
   }
 
   private async handleRejoin(session: Session, _roomId: string, playerId: number) {
@@ -250,12 +289,87 @@ export class RoomDO {
       }
     }
     player.connected = true;
-    delete this.meta.goneDeadlines[String(playerId)];
+    if (!player.removed) player.quality = normQuality(player.quality);
     session.playerId = playerId;
     this.syncTurnTimerMeta();
     await this.persist();
     await this.rescheduleAlarm();
     this.send(session.ws, this.roomPayload(playerId));
+    this.broadcastPresence();
+  }
+
+  private async removeActivePlayer(playerId: number, opts?: { closeSession?: Session | null }) {
+    if (!this.room) return;
+    const room = this.room;
+    const p = room.players.find((x) => x.id === playerId);
+    if (!p) return;
+    if (p.removed && room.state.status === 'playing') return;
+
+    if (room.state.status === 'waiting') {
+      // remove from lobby and reindex; keep other connected players in the same room
+      const removedId = playerId;
+      for (const s of Array.from(this.sessions)) {
+        if (s.playerId === removedId) {
+          this.sessions.delete(s);
+          try { s.ws.close(); } catch {}
+        } else if (s.playerId != null && s.playerId > removedId) {
+          s.playerId = s.playerId - 1;
+        }
+      }
+      room.players = room.players.filter((x) => x.id !== removedId);
+      room.players.forEach((pl, i) => {
+        pl.id = i;
+        pl.color = PLAYER_COLORS[i];
+        pl.removed = false;
+        if (pl.connected) pl.quality = normQuality(pl.quality);
+      });
+      room.hostId = 0;
+      this.clearTurnTimerMeta();
+      if (room.players.length === 0) {
+        this.room = null;
+        await this.state.storage.deleteAll();
+        for (const s of this.sessions) try { s.ws.close(); } catch {}
+        this.sessions.clear();
+        return;
+      }
+      room.state = lobbyState(room);
+      await this.persist();
+      await this.rescheduleAlarm();
+      this.broadcastRoom();
+      return;
+    }
+
+    if (room.state.status === 'playing') {
+      p.removed = true;
+      p.connected = false;
+      p.quality = 'offline';
+      // close sessions for this player
+      for (const s of Array.from(this.sessions)) {
+        if (s.playerId === playerId) {
+          this.sessions.delete(s);
+          try { s.ws.close(); } catch {}
+        }
+      }
+      room.state = removePlayerCells(room.state, playerId);
+      this.syncTurnTimerMeta();
+      await this.persist();
+      this.broadcastState();
+      await this.rescheduleAlarm();
+      return;
+    }
+
+    // finished/other: just mark disconnected
+    p.connected = false;
+    p.quality = 'offline';
+    for (const s of Array.from(this.sessions)) {
+      if (s.playerId === playerId) {
+        this.sessions.delete(s);
+        try { s.ws.close(); } catch {}
+      }
+    }
+    await this.persist();
+    this.broadcastPresence();
+    await this.rescheduleAlarm();
   }
 
   private async onMessage(session: Session, data: any) {
@@ -284,7 +398,17 @@ export class RoomDO {
       return;
     }
     if (msg.type === 'ping') {
-      this.send(session.ws, { type: 'pong' });
+      this.send(session.ws, { type: 'pong', ts: (msg as any).ts });
+      return;
+    }
+    if (msg.type === 'quality') {
+      if (!this.room || session.playerId == null) return;
+      const p = this.room.players.find(x => x.id === session.playerId);
+      if (p) {
+        p.quality = normQuality((msg as any).quality);
+        await this.persist();
+        this.broadcastPresence();
+      }
       return;
     }
 
@@ -295,11 +419,16 @@ export class RoomDO {
     const room = this.room;
     const playerId = session.playerId;
 
+    if (msg.type === 'leave') {
+      await this.removeActivePlayer(playerId, { closeSession: session });
+      return;
+    }
+
     if (msg.type === 'start') {
       if (playerId !== room.hostId) return this.send(session.ws, { type: 'error', message: 'Only host can start' });
       if (room.players.length < 2) return this.send(session.ws, { type: 'error', message: 'Need at least 2 players' });
       room.state = createGame(room.players.map((p) => ({ name: p.name })));
-      this.meta.goneDeadlines = {};
+      for (const p of room.players) { p.removed = false; if (p.connected) p.quality = normQuality(p.quality); }
       this.syncTurnTimerMeta();
       await this.persist();
       this.broadcastState();
@@ -308,6 +437,8 @@ export class RoomDO {
     }
 
     if (msg.type === 'move') {
+      const playerRec = room.players.find(p => p.id === playerId);
+      if (playerRec?.removed) return this.send(session.ws, { type: 'error', message: 'You left the game' });
       const result = applyMove(room.state, playerId, msg.r, msg.c);
       if (!result.ok || !result.state) return this.send(session.ws, { type: 'error', message: result.error || 'Invalid move' });
       room.state = result.state;
@@ -321,11 +452,11 @@ export class RoomDO {
     if (msg.type === 'rematch') {
       if (playerId !== room.hostId) return this.send(session.ws, { type: 'error', message: 'Only host can start rematch' });
       if (room.players.length < 2) return this.send(session.ws, { type: 'error', message: 'Need at least 2 players' });
-      room.state = createGame(room.players.map((p) => ({ name: p.name })));
-      this.meta.goneDeadlines = {};
-      this.syncTurnTimerMeta();
+      this.clearTurnTimerMeta();
+      for (const p of room.players) { p.removed = false; if (p.connected) p.quality = normQuality(p.quality); else p.quality = 'offline'; }
+      room.state = lobbyState(room);
       await this.persist();
-      this.broadcastState();
+      this.broadcastRoom();
       await this.rescheduleAlarm();
       return;
     }
@@ -334,42 +465,27 @@ export class RoomDO {
   private async onClose(session: Session) {
     this.sessions.delete(session);
     if (!this.room || session.playerId == null) return;
-    const room = this.room;
     const playerId = session.playerId;
-    for (const s of this.sessions) {
-      if (s.playerId === playerId) return;
-    }
+    if (this.hasOtherSession(playerId)) return;
+    const room = this.room;
     const p = room.players.find((x) => x.id === playerId);
-    if (p) p.connected = false;
 
     if (room.state.status === 'waiting') {
-      await this.state.storage.deleteAlarm();
-      room.players = room.players.filter((x) => x.id !== playerId);
-      room.players.forEach((pl, i) => { pl.id = i; pl.color = PLAYER_COLORS[i]; });
-      room.hostId = 0;
-      this.meta = { turnDeadline: null, turnKey: null, goneDeadlines: {} };
-      if (room.players.length === 0) {
-        this.room = null;
-        await this.state.storage.deleteAll();
-        return;
-      }
-      room.state = lobbyState(room);
+      await this.removeActivePlayer(playerId);
+      return;
+    }
+
+    if (room.state.status === 'playing') {
+      // player left/disconnected: vanish their cells immediately
+      await this.removeActivePlayer(playerId);
+      return;
+    }
+
+    if (p) {
+      p.connected = false;
+      p.quality = 'offline';
       await this.persist();
-      for (const s of this.sessions) {
-        this.send(s.ws, { type: 'error', message: 'Lobby changed, please rejoin' });
-        try { s.ws.close(); } catch {}
-      }
-      this.sessions.clear();
-    } else if (room.state.status === 'playing') {
-      // keep player for rejoin, but remove their cells if they stay gone
-      this.meta.goneDeadlines[String(playerId)] = Date.now() + GONE_MS;
-      this.syncTurnTimerMeta();
-      await this.persist();
-      this.broadcastState();
-      await this.rescheduleAlarm();
-    } else {
-      await this.persist();
-      this.broadcastState();
+      this.broadcastPresence();
       await this.rescheduleAlarm();
     }
   }
@@ -383,22 +499,6 @@ export class RoomDO {
     let changed = false;
     let lastExplosions: { r: number; c: number; owner: number }[] | undefined;
 
-    // 1) remove players who have been disconnected/gone past grace period
-    const goneIds = Object.entries(this.meta.goneDeadlines || {})
-      .filter(([, t]) => typeof t === 'number' && t <= now)
-      .map(([id]) => Number(id));
-    for (const pid of goneIds) {
-      delete this.meta.goneDeadlines[String(pid)];
-      const p = this.room.players.find((x) => x.id === pid);
-      if (!p || p.connected) continue;
-      if (this.room.state.status !== 'playing') continue;
-      this.room.state = removePlayerCells(this.room.state, pid);
-      changed = true;
-      lastExplosions = undefined;
-      if (this.room.state.status !== 'playing') break;
-    }
-
-    // 2) auto-play turn if deadline expired for the current turn
     if (this.room.state.status === 'playing') {
       const key = turnKeyOf(this.room.state);
       if (key && this.meta.turnKey === key && this.meta.turnDeadline != null && this.meta.turnDeadline <= now) {
@@ -413,7 +513,6 @@ export class RoomDO {
               lastExplosions = result.explosions;
               changed = true;
             } else {
-              // avoid stall: push deadline forward slightly
               this.meta.turnDeadline = now + 5_000;
             }
           } else {
@@ -427,7 +526,6 @@ export class RoomDO {
       }
     }
 
-    // sync next turn deadline after any state changes
     this.syncTurnTimerMeta();
     if (changed) {
       await this.persist();
