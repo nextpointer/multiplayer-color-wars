@@ -19,6 +19,7 @@ export type ScorePillProps = {
   connQuality?: ConnQuality;
   pingMs?: number | null;
   isMe?: boolean;
+  statusLabel?: string | null;
 };
 
 function connColor(q?: ConnQuality) {
@@ -43,6 +44,7 @@ export function ScorePill({
   connQuality,
   pingMs,
   isMe = false,
+  statusLabel = null,
 }: ScorePillProps) {
   const reduce = useReducedMotion();
   const height = compact ? 44 : 56;
@@ -65,8 +67,12 @@ export function ScorePill({
         opacity: tucked ? 0 : ghosted ? 0.4 : 1,
       }}
       transition={{ duration: 0.2, ease: EASE.snap }}
-      title={name ? `${name}${isMe && pingMs != null ? ` • ${pingMs}ms` : ""}` : (isMe && pingMs != null ? `${pingMs}ms` : undefined)}
-      aria-label={name ? `${name}: ${score}` : `Score ${score}`}
+      title={
+        name
+          ? `${name}${statusLabel ? ` • ${statusLabel}` : ""}${isMe && pingMs != null ? ` • ${pingMs}ms` : ""}`
+          : (isMe && pingMs != null ? `${pingMs}ms` : undefined)
+      }
+      aria-label={name ? `${name}: ${score}${statusLabel ? `, ${statusLabel}` : ""}` : `Score ${score}`}
       style={{
         height,
         minWidth: compact ? 56 : 72,
@@ -106,6 +112,11 @@ export function ScorePill({
       {isMe && pingMs != null && (
         <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", opacity: 0.9, lineHeight: 1, padding: "2px 6px", borderRadius: 999, background: "rgba(255,255,255,0.18)" }}>
           {pingMs}ms
+        </span>
+      )}
+      {!isMe && statusLabel && (
+        <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", opacity: 0.95, lineHeight: 1, padding: "2px 6px", borderRadius: 999, background: "rgba(0,0,0,0.35)", whiteSpace: "nowrap" }}>
+          {statusLabel}
         </span>
       )}
     </motion.div>

@@ -51,10 +51,12 @@ export function GameScreen(props: {
     const active = s.p.id === current?.id;
     const isMe = s.p.id === playerId;
     const conn = isMe ? { connected: true, quality: myQuality || "good" } : playersConn?.[s.p.id];
+    const isOffline = !isMe && (conn?.connected === false || conn?.quality === "offline");
+    const statusLabel = isOffline ? (!s.p.alive ? "Left" : "Offline") : null;
     return (
       <ScorePill key={s.p.id} score={s.score} color={s.seat.base} seatIndex={s.p.id} active={active && !chainLocked}
         tucked={false} ghosted={!s.p.alive} compact={true} name={s.p.name} bumpKey={bumpKeys[s.p.id]||0} tuckDirection={edge === "top" ? "up" : "right"}
-        connQuality={conn?.quality} pingMs={isMe ? (myRtt ?? null) : null} isMe={isMe} />
+        connQuality={conn?.quality} pingMs={isMe ? (myRtt ?? null) : null} isMe={isMe} statusLabel={statusLabel} />
     );
   };
 
