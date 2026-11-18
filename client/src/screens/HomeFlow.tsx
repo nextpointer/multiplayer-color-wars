@@ -6,26 +6,36 @@ import { IconButton } from "../design/IconButton";
 import { Mascot } from "../design/Mascot";
 import { Modal } from "../design/Modal";
 import { SURFACES } from "../design/tokens";
-import { SPRING } from "../design/motion";
 import { play } from "../design/sound";
 import { useSettings } from "../state/settings";
+import type { BotDifficulty } from "../engine/bot";
 
 const HOWTO_TEXT = "Try to occupy the whole field with your color. On your first turn, tap an empty cell to place your starting cell with 3 dots. After that, you can only tap your own cells to add 1 dot. When a cell's dots reach its neighbor count, it splits and adds 1 dot to each neighbor, capturing them. Last color standing wins!";
+
+export type HomeView = "landing" | "howto" | "create" | "join" | "single";
+
+const DIFFICULTIES: { id: BotDifficulty; label: string; desc: string }[] = [
+  { id: "easy", label: "Easy", desc: "Relaxed opponent, good for learning" },
+  { id: "medium", label: "Medium", desc: "Smart moves and solid pressure" },
+  { id: "hard", label: "Hard", desc: "Looks ahead and punishes mistakes" },
+];
 
 export function HomeFlow(props: {
   connected: boolean;
   name: string; setName: (v: string) => void;
   joinCode: string; setJoinCode: (v: string) => void;
-  view: "landing" | "howto" | "create" | "join";
-  setView: (v: "landing" | "howto" | "create" | "join") => void;
+  view: HomeView;
+  setView: (v: HomeView) => void;
   onCreate: () => void; onJoin: () => void;
+  onStartSingle: (difficulty: BotDifficulty) => void;
   onOpenSettings: () => void; onOpenHelp: () => void;
   showSettings: boolean; setShowSettings: (v: boolean) => void;
 }) {
-  const { connected, name, setName, joinCode, setJoinCode, view, setView, onCreate, onJoin, onOpenSettings, onOpenHelp, showSettings, setShowSettings } = props;
-  const { settings, setMuted, setHaptics } = useSettings();
+  const { connected, name, setName, joinCode, setJoinCode, view, setView, onCreate, onJoin, onStartSingle, onOpenSettings, onOpenHelp, showSettings, setShowSettings } = props;
+  const { settings, setMuted } = useSettings();
   const [playersCount, setPlayersCount] = useState(4);
   const [joinErr, setJoinErr] = useState(false);
+  const [difficulty, setDifficulty] = useState<BotDifficulty>("medium");
 
   if (view === "howto") {
     return (
@@ -49,11 +59,58 @@ export function HomeFlow(props: {
             <Mascot color="#eab308" size="lg" state="entrance" animateKey={4} />
           </div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16, marginTop: 4, flexWrap: "wrap" }}>
-            <PrimaryPillButton label="PLAY" onClick={() => { play("ui.tap"); setView("create"); }} />
+            <PrimaryPillButton label="VS COMPUTER" onClick={() => { play("ui.tap"); setView("single"); }} />
             <IconButton variant="navy" icon="help" ariaLabel="Help" onClick={() => { play("ui.tap"); onOpenHelp(); }} />
           </div>
         </div>
         <CloudField />
+      </div>
+    );
+  }
+
+  if (view === "single") {
+    const canStart = name.trim().length > 0;
+    return (
+      <div className="cw-page-shell cw-no-scrollbar" style={{ background: SURFACES.azure, position: "relative", overflowY: "auto" }}>
+        <div style={{ background: SURFACES.plum, minHeight: 120, position: "relative", overflow: "hidden", padding: "16px", display: "flex", alignItems: "center", gap: 12 }}>
+          <PlumPattern />
+          <div style={{ position: "relative", zIndex: 1 }}><IconButton variant="light" icon="back" ariaLabel="Back" onClick={() => { play("ui.back"); setView("landing"); }} /></div>
+          <div style={{ position: "relative", zIndex: 1, minWidth: 0 }}>
+            <div className="cw-h1" style={{ color: SURFACES.whiteText }}>Vs Computer</div>
+            <div className="cw-caption" style={{ color: "rgba(255,255,255,0.85)", marginTop: 2 }}>Play locally against the machine</div>
+          </div>
+        </div>
+        <div style={{ padding: "20px 16px 40px", maxWidth: 520, margin: "0 auto" }}>
+          <div className="cw-caption" style={{ marginBottom: 6, letterSpacing: 1 }}>YOUR NAME</div>
+          <input
+            value={name}
+            onChange={e => setName(e.target.value)}
+            maxLength={12}
+            placeholder="Your name"
+            className="cw-truncate"
+            style={{ width: "100%", height: 56, borderRadius: 999, border: "none", padding: "0 20px", textAlign: "center", fontSize: 17, fontWeight: 700, color: SURFACES.ink, outline: "none", marginBottom: 18, background: SURFACES.cloud }}
+          />
+          <div className="cw-caption" style={{ marginBottom: 8, letterSpacing: 1 }}>DIFFICULTY</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, marginBottom: 10 }}>
+            {DIFFICULTIES.map(d => {
+              const active = difficulty === d.id;
+              return (
+                <button key={d.id} onClick={() => { setDifficulty(d.id); play("ui.tap"); }}
+                  style={{ height: 48, borderRadius: 16, border: "none", fontWeight: 800, fontSize: 16, background: active ? SURFACES.action : SURFACES.cloud, color: active ? SURFACES.whiteText : SURFACES.ink, transform: active ? "rotate(-2deg)" : "none", cursor: "pointer" }}>
+                  {d.label}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ background: "rgba(255,255,255,0.35)", borderRadius: 16, padding: "12px 14px", marginBottom: 22, textAlign: "center" }}>
+            <div className="cw-body" style={{ color: SURFACES.ink, fontWeight: 700, marginBottom: 2 }}>{DIFFICULTIES.find(d => d.id === difficulty)?.label}</div>
+            <div className="cw-caption" style={{ color: SURFACES.inkSoft }}>{DIFFICULTIES.find(d => d.id === difficulty)?.desc}</div>
+          </div>
+          <div style={{ width: "100%", maxWidth: 320, margin: "0 auto", display: "flex", justifyContent: "center" }}>
+            <PrimaryPillButton label="START GAME" onClick={() => onStartSingle(difficulty)} disabled={!canStart} />
+          </div>
+          {!canStart && <div className="cw-caption" style={{ marginTop: 10, textAlign: "center" }}>Enter your name to play</div>}
+        </div>
       </div>
     );
   }
@@ -82,6 +139,7 @@ export function HomeFlow(props: {
           <div style={{ width: "92%", margin: "0 auto" }}>
             <PrimaryPillButton label="CREATE ROOM" onClick={onCreate} disabled={!connected} />
           </div>
+          {!connected && <div className="cw-caption" style={{ marginTop: 10, textAlign: "center", color: "#FE6057" }}>Connecting to server…</div>}
         </div>
       </div>
     );
@@ -143,6 +201,7 @@ export function HomeFlow(props: {
             <PrimaryPillButton label="JOIN ROOM" onClick={onJoin} disabled={!canJoin} />
           </div>
           {!name.trim() && <div className="cw-caption" style={{ marginTop: 10, textAlign: "center" }}>Enter your name to join</div>}
+          {!connected && name.trim() && <div className="cw-caption" style={{ marginTop: 10, textAlign: "center", color: "#FE6057" }}>Connecting to server…</div>}
         </div>
       </div>
     );
@@ -162,11 +221,11 @@ export function HomeFlow(props: {
             <Mascot color="#eab308" size="lg" state="entrance" animateKey={4} />
           </div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
-            <PrimaryPillButton label="PLAY" onClick={() => { play("ui.tap"); setView("create"); }} />
+            <PrimaryPillButton label="VS COMPUTER" onClick={() => { play("ui.tap"); setView("single"); }} />
             <IconButton variant="navy" icon="help" ariaLabel="How to play" onClick={() => { play("ui.tap"); setView("howto"); }} />
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "center", width: "100%" }}>
-            <button onClick={() => { play("ui.tap"); setView("create"); }} style={{ width: "min(100%, 280px)", height: 54, padding: "0 24px", borderRadius: 999, border: "3px dashed var(--cw-ink-soft)", background: "rgba(255,255,255,0.35)", color: SURFACES.ink, fontWeight: 700, fontSize: 17, cursor: "pointer" }}>Create room</button>
+            <button onClick={() => { play("ui.tap"); setView("create"); }} style={{ width: "min(100%, 280px)", height: 54, padding: "0 24px", borderRadius: 999, border: "3px dashed var(--cw-ink-soft)", background: "rgba(255,255,255,0.35)", color: SURFACES.ink, fontWeight: 700, fontSize: 17, cursor: "pointer" }}>Create online room</button>
             <button onClick={() => { play("ui.tap"); setView("join"); }} style={{ width: "min(100%, 280px)", height: 54, padding: "0 24px", borderRadius: 999, border: "3px dashed var(--cw-ink-soft)", background: "rgba(255,255,255,0.35)", color: SURFACES.ink, fontWeight: 700, fontSize: 17, cursor: "pointer" }}>Join room</button>
           </div>
           <div style={{ marginTop: 18, display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
@@ -174,7 +233,7 @@ export function HomeFlow(props: {
             <span className="cw-caption">v1.0</span>
             <IconButton variant="ghost" icon="gear" ariaLabel="Settings" onClick={() => { play("ui.tap"); onOpenSettings(); }} />
           </div>
-          {!connected && <div className="cw-caption" style={{ marginTop: 10, color: "#FE6057" }}>Connecting…</div>}
+          {!connected && <div className="cw-caption" style={{ marginTop: 10, color: SURFACES.inkSoft }}>Online multiplayer: connecting…</div>}
         </motion.div>
       </div>
       <Modal open={showSettings} onClose={() => setShowSettings(false)} title="Settings">
@@ -201,7 +260,8 @@ export function SettingsRows() {
       {row("Sound", toggle(!settings.muted, (v)=>setMuted(!v)))}
       {row("Haptics", toggle(settings.haptics, setHaptics))}
       <div style={{ padding: "12px 0" }} className="cw-caption">How to play: place your first 3-dot cell on an empty spot, then tap your own cells to grow. When a cell reaches its neighbor count it bursts to neighbors, capturing them. Last color standing wins!</div>
-      <div className="cw-caption">v1.0.0</div>
+      <div className="cw-caption">Single player: play locally vs the computer (Easy / Medium / Hard). Online multiplayer requires a server connection.</div>
+      <div className="cw-caption" style={{ marginTop: 4 }}>v1.0.0</div>
     </div>
   );
 }

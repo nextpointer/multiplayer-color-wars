@@ -28,8 +28,9 @@ export function GameScreen(props: {
   playersConn?: Record<number, { connected: boolean; quality: ConnQuality }>;
   myRtt?: number | null;
   myQuality?: ConnQuality;
+  connectionLabel?: string | null;
 }) {
-  const { state, playerId, myTurn, chainLocked, flightRef, bumpKeys, onMove, onQuit, onOpenSettings, onMetrics, playersConn, myRtt, myQuality } = props;
+  const { state, playerId, myTurn, chainLocked, flightRef, bumpKeys, onMove, onQuit, onOpenSettings, onMetrics, playersConn, myRtt, myQuality, connectionLabel } = props;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const { width: vw, height: vh, forceLandscape } = useViewport();
   const landscape = vw >= vh;
@@ -90,11 +91,13 @@ export function GameScreen(props: {
       )}
 
       {(() => {
-        const q = myQuality || "good";
+        const q = connectionLabel ? "good" : (myQuality || "good");
         const dot = q === "good" ? "#22c55e" : q === "ok" ? "#eab308" : q === "bad" ? "#ef4444" : "#6b7280";
-        const label = myRtt != null ? `${myRtt}ms` : (q === "offline" ? "offline" : "…");
+        const label = connectionLabel ?? (myRtt != null ? `${myRtt}ms` : (q === "offline" ? "offline" : "…"));
+        const title = connectionLabel ? connectionLabel : `Connection: ${q}${myRtt != null ? ` (${myRtt}ms)` : ""}`;
+        const aria = connectionLabel ? connectionLabel : `Connection ${q} ${label}`;
         const badge = (
-          <div title={`Connection: ${q}${myRtt != null ? ` (${myRtt}ms)` : ""}`} aria-label={`Connection ${q} ${label}`}
+          <div title={title} aria-label={aria}
             style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 999, background: "rgba(47,51,62,0.88)", color: "#fff", fontSize: 12, fontWeight: 800, boxShadow: `0 0 0 2px ${dot}55` }}>
             <span style={{ width: 8, height: 8, borderRadius: "50%", background: dot, boxShadow: `0 0 0 2px ${dot}33` }} />
             <span>{label}</span>

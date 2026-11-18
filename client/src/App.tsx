@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { MotionConfig, useReducedMotion } from "motion/react";
-import { type Cell as GCell, type GameState } from "@game/shared";
+import { applyMove, createGame, type Cell as GCell, type GameState } from "@game/shared";
 import { SettingsProvider, useSettings } from "./state/settings";
 import { ToastProvider, useToast } from "./design/Toast";
 import { Modal } from "./design/Modal";
@@ -8,8 +8,9 @@ import { PrimaryPillButton } from "./design/PrimaryPillButton";
 import { visualsForPlayer } from "./design/tokens";
 import { play, haptic, unlockOnGesture } from "./design/sound";
 import { deriveMovePlan, precomputeSnapshots, type MoveAnimationPlan } from "./engine/chainAdapter";
+import { chooseBotMove, type BotDifficulty } from "./engine/bot";
 import type { SvgFlightEngineHandle } from "./engine/svgFlight";
-import { HomeFlow, SettingsRows } from "./screens/HomeFlow";
+import { HomeFlow, SettingsRows, type HomeView } from "./screens/HomeFlow";
 import { LobbyScreen } from "./screens/LobbyScreen";
 import { GameScreen } from "./screens/GameScreen";
 import { ResultsScreen } from "./screens/ResultsScreen";
@@ -66,7 +67,7 @@ function AppInner() {
   const [lobbyPlayers, setLobbyPlayers] = useState<PublicPlayer[]>([]);
   const [serverState, setServerState] = useState<GameState | null>(null);
   const [displayState, setDisplayState] = useState<GameState | null>(null);
-  const [homeView, setHomeView] = useState<"landing" | "howto" | "create" | "join">("landing");
+  const [homeView, setHomeView] = useState<HomeView>("landing");
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showQuit, setShowQuit] = useState(false);
@@ -74,6 +75,7 @@ function AppInner() {
   const [flashCells, setFlashCells] = useState<Set<string>>(new Set());
   const [nudgeKey, setNudgeKey] = useState(0);
   const [bumpKeys, setBumpKeys] = useState<Record<number, number>>({});
+  const [localMode, setLocalMode] = useState<{ difficulty: BotDifficulty; humanId: number; botId: number; humanName: string; botName: string } | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const flightRef = useRef<SvgFlightEngineHandle | null>(null);
@@ -93,6 +95,8 @@ function AppInner() {
   const intentionallyLeavingRef = useRef(false);
   const fatalReloadHandledRef = useRef(false);
   const animatingRef = useRef(false);
+  const localModeRef = useRef<typeof localMode>(null);
+  const botTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conn = useConnectionQuality();
 
   useEffect(() => {
@@ -117,12 +121,160 @@ function AppInner() {
 
   useEffect(() => { displayStateRef.current = displayState; }, [displayState]);
   useEffect(() => { serverStateRef.current = serverState; }, [serverState]);
+  useEffect(() => { localModeRef.current = localMode; }, [localMode]);
   useEffect(() => { unlockOnGesture(); }, []);
+  useEffect(() => () => { if (botTimerRef.current) clearTimeout(botTimerRef.current); }, []);
 
   const send = useCallback((obj: any) => {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
   }, []);
+
+  const clearBotTimer = useCallback(() => {
+    if (botTimerRef.current) { clearTimeout(botTimerRef.current); botTimerRef.current = null; }
+  }, []);
+
+  const bumpScore = useCallback((pid: number) => {
+    setBumpKeys(prev => ({ ...prev, [pid]: (prev[pid] || 0) + 1 }));
+  }, []);
+
+  const resetGameView = useCallback(() => {
+    clearBotTimer();
+    animTokenRef.current++;
+    animatingRef.current = false;
+    flightRef.current?.clear();
+    pendingMoveRef.current = null;
+    preMoveStateRef.current = null;
+    prevTurnRef.current = null;
+    setChainLocked(false);
+    setFlashCells(new Set());
+    setBumpKeys({});
+    setNudgeKey(0);
+  }, [clearBotTimer]);
+
+  const exitLocalMode = useCallback(() => {
+    resetGameView();
+    setLocalMode(null);
+    localModeRef.current = null;
+    sessionRef.current = null;
+    setRoomId(null);
+    setPlayerId(null);
+    setHostId(null);
+    setLobbyPlayers([]);
+    setServerState(null);
+    setDisplayState(null);
+    setDisconnectedNotice(false);
+    setShowQuit(false);
+    setHomeView("landing");
+  }, [resetGameView]);
+
+  const playLocalMoveInternal = useCallback(async (pre: GameState, moverId: number, r: number, c: number) => {
+    const result = applyMove(pre, moverId, r, c);
+    if (!result.ok || !result.state) {
+      toast(result.error || "Invalid move");
+      pendingMoveRef.current = null;
+      setDisplayState(pre);
+      preMoveStateRef.current = pre;
+      return false;
+    }
+    const nextState = result.state;
+    const explosions = result.explosions || [];
+    const plan = deriveMovePlan({
+      rows: pre.rows,
+      cols: pre.cols,
+      preBoard: pre.board,
+      playerId: moverId,
+      r, c,
+      explosions,
+    });
+
+    if (nextState.status === "finished" && plan.waves.length > 0) {
+      setServerState(pre);
+    } else {
+      setServerState(nextState);
+    }
+
+    const animRunner = playMoveAnimationRef.current;
+    if (animRunner) {
+      await animRunner(pre, plan, nextState);
+    } else {
+      setDisplayState(nextState);
+      preMoveStateRef.current = nextState;
+    }
+    setServerState(nextState);
+    setDisplayState(nextState);
+    preMoveStateRef.current = nextState;
+    bumpScore(moverId);
+    return true;
+  }, [toast, bumpScore]);
+
+  const scheduleBotMove = useCallback((baseState?: GameState) => {
+    clearBotTimer();
+    const cfg = localModeRef.current;
+    if (!cfg) return;
+    const st = baseState || serverStateRef.current;
+    if (!st || st.status !== "playing") return;
+    const cur = st.players[st.currentPlayerIndex];
+    if (!cur || cur.id !== cfg.botId || !cur.alive) return;
+
+    const delay = 350 + Math.floor(Math.random() * 350);
+    botTimerRef.current = setTimeout(async () => {
+      botTimerRef.current = null;
+      const cfgNow = localModeRef.current;
+      if (!cfgNow) return;
+      // wait until not animating
+      let tries = 0;
+      while (animatingRef.current && tries < 200) { await new Promise(r => setTimeout(r, 30)); tries++; }
+      const live = serverStateRef.current;
+      if (!localModeRef.current || !live || live.status !== "playing") return;
+      const liveCur = live.players[live.currentPlayerIndex];
+      if (!liveCur || liveCur.id !== cfgNow.botId || !liveCur.alive) return;
+
+      const move = chooseBotMove(live, cfgNow.botId, cfgNow.difficulty);
+      if (!move) return;
+      preMoveStateRef.current = live;
+      setDisplayState(withPlacement(live, move.r, move.c, cfgNow.botId));
+      await playLocalMoveInternal(live, cfgNow.botId, move.r, move.c);
+    }, delay);
+  }, [clearBotTimer, playLocalMoveInternal]);
+
+  // auto-trigger bot turns in local mode
+  useEffect(() => {
+    if (!localMode) return;
+    if (!serverState || serverState.status !== "playing") return;
+    if (chainLocked || animatingRef.current) return;
+    const cur = serverState.players[serverState.currentPlayerIndex];
+    if (!cur || cur.id !== localMode.botId || !cur.alive) return;
+    scheduleBotMove(serverState);
+  }, [localMode, serverState?.status, serverState?.currentPlayerIndex, serverState?.turnCount, chainLocked, scheduleBotMove]);
+
+  const startLocalGame = useCallback((difficulty: BotDifficulty) => {
+    const humanName = (name || "Player").trim().slice(0, 20) || "Player";
+    localStorage.setItem("cw.name", humanName);
+    const botName = `CPU (${difficulty[0].toUpperCase()}${difficulty.slice(1)})`;
+    const game = createGame([{ name: humanName }, { name: botName }]);
+    const cfg = { difficulty, humanId: 0, botId: 1, humanName, botName };
+    resetGameView();
+    setLocalMode(cfg);
+    localModeRef.current = cfg;
+    setRoomId("LOCAL");
+    setPlayerId(0);
+    setHostId(0);
+    setLobbyPlayers([
+      { id: 0, name: humanName, color: game.players[0].color, connected: true, quality: "good" },
+      { id: 1, name: botName, color: game.players[1].color, connected: true, quality: "good" },
+    ]);
+    setServerState(game);
+    setDisplayState(game);
+    preMoveStateRef.current = game;
+    prevTurnRef.current = game.players[game.currentPlayerIndex]?.id ?? null;
+    setShowQuit(false);
+    setShowSettings(false);
+    setDisconnectedNotice(false);
+    sessionRef.current = null;
+    void play("ui.tap");
+    haptic("light");
+  }, [name, resetGameView]);
 
   const playMoveAnimation = useCallback(async (pre: GameState, plan: MoveAnimationPlan, nextState: GameState) => {
     const engine = flightRef.current;
@@ -247,12 +399,13 @@ function AppInner() {
         setConnected(false);
         conn.onDisconnected();
         if (pingTimerRef.current) { clearInterval(pingTimerRef.current); pingTimerRef.current = null; }
-        if (!intentionallyLeavingRef.current) scheduleReconnect();
+        if (!intentionallyLeavingRef.current && !localModeRef.current) scheduleReconnect();
+        if (localModeRef.current) setDisconnectedNotice(false);
       };
 
       ws.onerror = () => {
         if (wsRef.current !== ws) return;
-        setDisconnectedNotice(true);
+        if (!localModeRef.current) setDisconnectedNotice(true);
       };
 
       ws.onmessage = (ev) => {
@@ -492,7 +645,7 @@ function AppInner() {
         <HomeFlow
           connected={connected} name={name} setName={setName} joinCode={joinCode} setJoinCode={setJoinCode}
           view={homeView} setView={setHomeView}
-          onCreate={doCreate} onJoin={doJoin}
+          onCreate={doCreate} onJoin={doJoin} onStartSingle={startLocalGame}
           onOpenSettings={() => setShowSettings(true)} onOpenHelp={() => { setShowHelp(true); }}
           showSettings={showSettings} setShowSettings={setShowSettings}
         />
@@ -523,7 +676,7 @@ function AppInner() {
 
   return (
     <>
-      {disconnectedNotice && (
+      {disconnectedNotice && !localMode && (
         <div style={{ position: "fixed", top: "calc(env(safe-area-inset-top) + 8px)", left: "50%", transform: "translateX(-50%)", zIndex: 70, background: "var(--cw-pill)", color: "#fff", padding: "8px 14px", borderRadius: 999, fontWeight: 700, fontSize: 14 }}>
           Reconnecting…
         </div>
@@ -549,34 +702,71 @@ function AppInner() {
             preMoveStateRef.current = state;
             pendingMoveRef.current = { r, c };
             setDisplayState(withPlacement(state, r, c, playerId));
-            send({ type: "move", r, c });
+            if (localModeRef.current) {
+              void (async () => {
+                const ok = await playLocalMoveInternal(state, playerId, r, c);
+                if (!ok) return;
+                const after = serverStateRef.current;
+                if (after && after.status === "playing") {
+                  const curId = after.players[after.currentPlayerIndex]?.id;
+                  if (curId === localModeRef.current?.botId) scheduleBotMove(after);
+                }
+              })();
+            } else {
+              send({ type: "move", r, c });
+            }
           }}
           onMetrics={(m) => { metricsRef.current = { cell: m.cell, gap: m.gap }; }}
           onQuit={() => setShowQuit(true)}
           onOpenSettings={() => setShowSettings(true)}
           settings={settings}
-          playersConn={conn.playersConn}
-          myRtt={conn.myRtt}
-          myQuality={conn.myQuality}
+          playersConn={localMode ? {
+            [localMode.humanId]: { connected: true, quality: "good" },
+            [localMode.botId]: { connected: true, quality: "good" },
+          } : conn.playersConn}
+          myRtt={localMode ? null : conn.myRtt}
+          myQuality={localMode ? "good" : conn.myQuality}
+          connectionLabel={localMode ? "Local" : null}
         />
       )}
       {serverState.status === "finished" && (
         <ResultsScreen
           state={serverState} playerId={playerId} hostId={hostId}
-          onRematch={() => { void play("ui.tap"); send({ type: "rematch" }); }}
-          onLobby={() => window.location.reload()}
+          localMode={!!localMode}
+          difficultyLabel={localMode ? (localMode.difficulty[0].toUpperCase() + localMode.difficulty.slice(1)) : undefined}
+          onRematch={() => {
+            void play("ui.tap");
+            if (localMode) {
+              startLocalGame(localMode.difficulty);
+            } else {
+              send({ type: "rematch" });
+            }
+          }}
+          onLobby={() => {
+            if (localMode) {
+              exitLocalMode();
+            } else {
+              window.location.reload();
+            }
+          }}
         />
       )}
       <Modal open={showSettings} onClose={() => setShowSettings(false)} title="Settings"><SettingsRows /></Modal>
-      <Modal open={showQuit} onClose={() => setShowQuit(false)} title="Leave the match?">
-        <div className="cw-body" style={{ color: "var(--cw-ink-soft)", marginBottom: 16 }}>You'll give up your cells.</div>
+      <Modal open={showQuit} onClose={() => setShowQuit(false)} title={localMode ? "Quit game?" : "Leave the match?"}>
+        <div className="cw-body" style={{ color: "var(--cw-ink-soft)", marginBottom: 16 }}>
+          {localMode ? "Return to the home screen." : "You'll give up your cells."}
+        </div>
         <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
           <button onClick={() => setShowQuit(false)} style={{ height: 48, padding: "0 24px", borderRadius: 999, border: "3px dashed var(--cw-ink-soft)", background: "transparent", color: "var(--cw-ink)", fontWeight: 700 }}>Stay</button>
-          <PrimaryPillButton label="Leave" onClick={() => {
+          <PrimaryPillButton label={localMode ? "Home" : "Leave"} onClick={() => {
             setShowQuit(false);
-            intentionallyLeavingRef.current = true;
-            try { send({ type: "leave" }); } catch {}
-            setTimeout(() => window.location.reload(), 120);
+            if (localMode) {
+              exitLocalMode();
+            } else {
+              intentionallyLeavingRef.current = true;
+              try { send({ type: "leave" }); } catch {}
+              setTimeout(() => window.location.reload(), 120);
+            }
           }} />
         </div>
       </Modal>
