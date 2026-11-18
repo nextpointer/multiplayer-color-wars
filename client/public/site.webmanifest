@@ -1,0 +1,39 @@
+{
+  "name": "Color Wars - Multiplayer Chain Reaction Game",
+  "short_name": "Color Wars",
+  "description": "Play Color Wars, a fast real-time multiplayer chain reaction strategy game. Place dots, trigger explosive bursts, capture cells, and outsmart friends online.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#42324C",
+  "theme_color": "#42324C",
+  "categories": ["games", "strategy", "multiplayer", "entertainment"],
+  "lang": "en",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/color-wars-logo-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/color-wars-logo-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/color-wars-logo-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
