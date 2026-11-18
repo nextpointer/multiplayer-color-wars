@@ -80,6 +80,7 @@ function AppInner() {
   const serverStateRef = useRef<GameState | null>(null);
   const metricsRef = useRef<{ cell: number; gap: number } | null>(null);
   const playMoveAnimationRef = useRef<((pre: GameState, plan: MoveAnimationPlan, nextState: GameState) => Promise<void>) | null>(null);
+  const animTokenRef = useRef(0);
   const sessionRef = useRef<{ roomId: string; playerId: number; name: string } | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -112,6 +113,7 @@ function AppInner() {
     for (const p of pre.players) playerColors[p.id] = p.color;
     const originColor = seatOfPlayer(pre.players[pre.currentPlayerIndex]).base;
 
+    const token = ++animTokenRef.current;
     setChainLocked(true);
     const capMs = nextState.status === 'finished' ? 12_000 : 20_000;
     try {
@@ -128,6 +130,7 @@ function AppInner() {
         snapshots,
         playerColors,
         onWaveStart: (wi) => {
+          if (token !== animTokenRef.current) return;
           // v2: do NOT clear the bursting cells — the engine's charge ball covers them
           // while it forms. Committing the plain snapshot keeps the incremented dots
           // visible, so the player sees the cell fill up BEFORE it explodes.
@@ -136,6 +139,7 @@ function AppInner() {
           haptic("medium");
         },
         onWaveArrivals: (wi) => {
+          if (token !== animTokenRef.current) return;
           const snap = snapshots[wi + 1];
           if (snap) setDisplayState(boardToState(snap, nextState)); // dots appear as resting dots
           void play("cascade.tick", { step: wi });
@@ -143,12 +147,14 @@ function AppInner() {
       });
       await Promise.race([run, new Promise<void>((resolve) => setTimeout(resolve, capMs))]);
     } catch {
-      // ignore animation errors and always apply final state
+      // ignore animation errors and always apply final state if still current
     } finally {
-      try { engine.clear(); } catch {}
-      setDisplayState(nextState);            // authoritative final state, always
-      preMoveStateRef.current = nextState;
-      setChainLocked(false);
+      if (token === animTokenRef.current) {
+        try { engine.clear(); } catch {}
+        setDisplayState(nextState);            // authoritative final state, always
+        preMoveStateRef.current = nextState;
+        setChainLocked(false);
+      }
     }
   }, [settings.chainSpeed, reduced]);
 
@@ -232,6 +238,10 @@ function AppInner() {
           return;
         }
         if (msg.type === "room") {
+          animTokenRef.current++;
+          flightRef.current?.clear();
+          pendingMoveRef.current = null;
+          setChainLocked(false);
           setRoomId(msg.roomId);
           setPlayerId(msg.playerId);
           setHostId(msg.hostId);
@@ -250,6 +260,8 @@ function AppInner() {
           pendingMoveRef.current = null;
 
           const applyImmediate = (s: GameState) => {
+            animTokenRef.current++;
+            flightRef.current?.clear();
             setServerState(s);
             setDisplayState(s);
             preMoveStateRef.current = s;
@@ -265,14 +277,23 @@ function AppInner() {
             return true;
           };
 
+          // Fresh game/rematch or authoritative reset (e.g. after rejoin): apply immediately.
+          const isFreshGame = msg.state.status === "playing" && msg.state.turnCount === 0 && (!msg.explosions || msg.explosions.length === 0);
+          const statusChanged = !!prev && prev.status !== msg.state.status;
+          if (isFreshGame || (statusChanged && msg.state.status === "waiting")) {
+            applyImmediate(msg.state);
+            prevTurnRef.current = msg.state.players[msg.state.currentPlayerIndex]?.id ?? null;
+            return;
+          }
+
           // Timeout/turn-skip or authoritative sync with unchanged board: apply immediately.
           if (!msg.explosions?.length && prev && boardsEqual(prev, msg.state)) {
-            flightRef.current?.clear();
             applyImmediate(msg.state);
             return;
           }
 
           const findMoveByDiff = (a: GameState, b: GameState) => {
+            if (a.rows !== b.rows || a.cols !== b.cols) return null;
             for (let r = 0; r < a.rows; r++) for (let c = 0; c < a.cols; c++) {
               const ca = a.board[r][c], cb = b.board[r][c];
               if (cb.count === ca.count + 1 && (ca.owner === null || ca.owner === cb.owner)) {
@@ -286,6 +307,10 @@ function AppInner() {
           };
 
           if (prev) {
+            if (prev.rows !== msg.state.rows || prev.cols !== msg.state.cols || prev.status !== msg.state.status) {
+              applyImmediate(msg.state);
+              return;
+            }
             const moverId = prev.players[prev.currentPlayerIndex]?.id ?? 0;
             let move = pending;
             if (!move && msg.explosions && msg.explosions.length > 0) {
@@ -305,11 +330,15 @@ function AppInner() {
             } else {
               setServerState(msg.state);
             }
-            const anim = (playMoveAnimationRef.current ?? playMoveAnimation)(prev, plan, msg.state);
+            const animPromise = (playMoveAnimationRef.current ?? playMoveAnimation)(prev, plan, msg.state);
             if (msg.state.status === "finished") {
-              void anim.finally(() => { setServerState(msg.state); });
+              void animPromise.then(() => {
+                if (serverStateRef.current?.status !== "playing" || serverStateRef.current?.turnCount !== 0) {
+                  setServerState(msg.state);
+                }
+              });
             } else {
-              void anim;
+              void animPromise;
             }
           } else {
             applyImmediate(msg.state);
