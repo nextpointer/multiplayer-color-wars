@@ -504,6 +504,10 @@ function AppInner() {
             returnToMultiplayerHome(m);
             return;
           }
+          // Suppress noisy/non-actionable connection-state spam.
+          if (/join or create a room first/i.test(m)) {
+            return;
+          }
           toast(m);
           void play("error.thud");
           pendingMoveRef.current = null;
