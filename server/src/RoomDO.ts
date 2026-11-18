@@ -49,8 +49,8 @@ interface RoomMeta {
   goneDeadlines: Record<string, number>;
 }
 
-const TURN_MS = 60_000;
-const GONE_MS = 60_000;
+const TURN_MS = 3 * 60_000;
+const GONE_MS = 3 * 60_000;
 
 function publicPlayers(room: StoredRoom) {
   return room.players.map((p) => ({ id: p.id, name: p.name, color: p.color }));
