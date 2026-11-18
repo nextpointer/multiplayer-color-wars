@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { setMuted as setSoundMuted } from "../design/sound";
+import { setMuted as setSoundMuted, setHapticsEnabled } from "../design/sound";
 
 export type ChainSpeedSetting = "normal" | "fast";
 
@@ -40,7 +40,7 @@ const SettingsCtx = createContext<Ctx | null>(null);
 
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<Settings>(() => load());
-  useEffect(() => { setSoundMuted(settings.muted); save(settings); }, [settings]);
+  useEffect(() => { setSoundMuted(settings.muted); setHapticsEnabled(settings.haptics); save(settings); }, [settings]);
 
   const value = useMemo<Ctx>(() => ({
     settings,

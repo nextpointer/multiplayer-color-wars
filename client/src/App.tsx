@@ -126,13 +126,13 @@ function AppInner() {
         originColor,
         snapshots,
         playerColors,
-        onWaveStart: (wi, wave) => {
+        onWaveStart: (wi) => {
           // v2: do NOT clear the bursting cells — the engine's charge ball covers them
           // while it forms. Committing the plain snapshot keeps the incremented dots
           // visible, so the player sees the cell fill up BEFORE it explodes.
           setDisplayState(boardToState(snapshots[wi], nextState));
           void play("burst.pop");
-          if (settings.haptics) haptic("medium");
+          haptic("medium");
         },
         onWaveArrivals: (wi) => {
           const snap = snapshots[wi + 1];
@@ -145,7 +145,7 @@ function AppInner() {
       preMoveStateRef.current = nextState;
       setChainLocked(false);
     }
-  }, [settings.chainSpeed, settings.haptics, reduced]);
+  }, [settings.chainSpeed, reduced]);
 
   useEffect(() => { playMoveAnimationRef.current = playMoveAnimation; }, [playMoveAnimation]);
 
@@ -333,11 +333,11 @@ function AppInner() {
     const cur = serverState.players[serverState.currentPlayerIndex]?.id;
     if (cur == null) return;
     if (prevTurnRef.current != null && prevTurnRef.current !== cur) {
-      if (cur === playerId) { void play("turn.you", { playerKey: seatOfPlayer(serverState.players[serverState.currentPlayerIndex]).key }); if (settings.haptics) haptic("medium"); }
+      if (cur === playerId) { void play("turn.you", { playerKey: seatOfPlayer(serverState.players[serverState.currentPlayerIndex]).key }); haptic("medium"); }
       else { void play("turn.other"); }
     }
     prevTurnRef.current = cur;
-  }, [serverState?.currentPlayerIndex, serverState?.status, playerId, settings.haptics]);
+  }, [serverState?.currentPlayerIndex, serverState?.status, playerId]);
 
   // turn bg
   const current = serverState?.players[serverState.currentPlayerIndex];
@@ -352,7 +352,7 @@ function AppInner() {
   const doCreate = () => {
     if (!name.trim()) { toast("Enter your name"); return; }
     localStorage.setItem("cw.name", name.trim());
-    void play("ui.tap"); if (settings.haptics) haptic("light");
+    void play("ui.tap"); haptic("light");
     send({ type: "create", name: name.trim() });
   };
   const doJoin = () => {
@@ -423,7 +423,7 @@ function AppInner() {
               if (cell.owner !== playerId) return;
             }
             void play("dot.add", { dotCount: Math.min(4, cell.count === 0 ? 3 : cell.count + 1) });
-            if (settings.haptics) haptic("light");
+            haptic("light");
             preMoveStateRef.current = state;
             pendingMoveRef.current = { r, c };
             setDisplayState(withPlacement(state, r, c, playerId));

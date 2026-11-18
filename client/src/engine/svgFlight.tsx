@@ -313,13 +313,13 @@ export const SvgFlightEngine = forwardRef<SvgFlightEngineHandle, {}>(function Sv
         const shadowWrap = svgEl("g");
         shadowWrap.appendChild(svgEl("ellipse", { rx: o.ballR * 0.95, ry: o.ballR * 0.34, fill: "#3A2C14" }));
 
-        // coloured blur trail: two ghosts chase the same arc on lagging springs
+        // coloured trail ghosts (no expensive SVG blur filters for smoother animation)
         const ghostB = svgEl("g");
         ghostB.setAttribute("style", `transform: translate(${o.kick.x}px, ${o.kick.y}px);`);
-        ghostB.appendChild(svgEl("circle", { r: o.ballR * 0.8, fill: o.color, opacity: 0.20, filter: "url(#blur-heavy)" }));
+        ghostB.appendChild(svgEl("circle", { r: o.ballR * 0.78, fill: o.color, opacity: 0.14 }));
         const ghostA = svgEl("g");
         ghostA.setAttribute("style", `transform: translate(${o.kick.x}px, ${o.kick.y}px);`);
-        ghostA.appendChild(svgEl("circle", { r: o.ballR * 0.95, fill: o.color, opacity: 0.38, filter: "url(#blur-soft)" }));
+        ghostA.appendChild(svgEl("circle", { r: o.ballR * 0.9, fill: o.color, opacity: 0.24 }));
 
         // the sphere: shaded ball + the dot riding inside + glossy highlight
         const head = svgEl("g");
@@ -366,18 +366,8 @@ export const SvgFlightEngine = forwardRef<SvgFlightEngineHandle, {}>(function Sv
           // launch stretch settles back to 1
           void animate(1.12, 1, { ...SPRING.settle, onUpdate: (v) => { hs = v; applyAll(); } });
 
-          if (!o.lite) {
-            cometTimer = window.setInterval(() => {
-              if (!layer.isConnected || landed) return;
-              const d = svgEl("circle", { r: Math.max(1.5, o.ballR * 0.34 * lastS), fill: o.color });
-              d.setAttribute("style", `transform: translate(${lastX}px, ${lastY}px); opacity: 0.2;`);
-              layer.appendChild(d);
-              const a = d.animate([{ opacity: 0.2 }, { opacity: 0 }], { duration: 170, fill: "forwards" });
-              a.onfinish = () => d.remove();
-              setTimeout(() => d.isConnected && d.remove(), 400);
-            }, 45);
-            setTimeout(() => { if (cometTimer !== null) clearInterval(cometTimer); }, o.delayMs + o.durMs + 1600);
-          }
+          // comet disabled for smoother chain reactions on all devices
+          cometTimer = null;
 
           Promise.all([
             withGuard(Promise.resolve(st), o.durMs + 800),
@@ -428,26 +418,26 @@ export const SvgFlightEngine = forwardRef<SvgFlightEngineHandle, {}>(function Sv
             setTimeout(() => wrap.isConnected && wrap.remove(), 500);
 
             if (!o.lite) {
-              for (let i = 0; i < 4; i++) {
-                const ang = ((-90 + (Math.random() * 80 - 40)) * Math.PI) / 180;
-                const dist = o.ballR * (1.5 + Math.random() * 1.3);
-                const phop = o.ballR * (0.9 + Math.random() * 0.9);
+              for (let i = 0; i < 2; i++) {
+                const ang = ((-90 + (Math.random() * 70 - 35)) * Math.PI) / 180;
+                const dist = o.ballR * (1.3 + Math.random() * 1.0);
+                const phop = o.ballR * (0.7 + Math.random() * 0.7);
                 const p = svgEl("circle", { r: Math.max(1.5, o.coreR * 0.55), fill: o.color });
-                p.setAttribute("style", "transform: translate(0px, 0px); opacity: 0.75;");
+                p.setAttribute("style", "transform: translate(0px, 0px); opacity: 0.65;");
                 layer.appendChild(p);
                 try {
                   void animate(0, 1, {
-                    duration: 0.24, ease: "easeOut",
+                    duration: 0.2, ease: "easeOut",
                     onUpdate: (tt) => {
                       const x = o.land.x + Math.cos(ang) * dist * tt;
                       const y = o.land.y + Math.sin(ang) * dist * tt - phop * Math.sin(Math.PI * tt);
-                      p.setAttribute("style", `transform: translate(${x}px, ${y}px) scale(${1 - 0.45 * tt});`);
+                      p.setAttribute("style", `transform: translate(${x}px, ${y}px) scale(${1 - 0.4 * tt});`);
                     },
                   });
                 } catch { p.remove(); }
-                const pa = p.animate([{ opacity: 0.75 }, { opacity: 0 }], { duration: 240, easing: "ease-out", fill: "forwards" });
+                const pa = p.animate([{ opacity: 0.65 }, { opacity: 0 }], { duration: 200, easing: "ease-out", fill: "forwards" });
                 pa.onfinish = () => p.remove();
-                setTimeout(() => p.isConnected && p.remove(), 300);
+                setTimeout(() => p.isConnected && p.remove(), 260);
               }
             }
 
@@ -568,7 +558,7 @@ export const SvgFlightEngine = forwardRef<SvgFlightEngineHandle, {}>(function Sv
             }
 
             const flightsInWave = wave.reduce((s, e) => s + (e.targets?.length ?? 0), 0);
-            const lite = flightsInWave > 30;          // perf guard: simplify huge waves
+            const lite = flightsInWave > 12;          // perf guard: simplify busy waves earlier for smoothness
             const donePromises: Promise<void>[] = [];
             const perKeyIdx = new Map<string, number>(); // per-target-cell counter
             let flightNo = 0;
