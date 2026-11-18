@@ -140,19 +140,20 @@ export function getValidMoves(state: GameState, playerId: PlayerId): { r: number
 }
 
 export function removePlayerCells(state: GameState, playerId: PlayerId): GameState {
+  const playerIdx = state.players.findIndex((p) => p.id === playerId);
+  if (playerIdx < 0) return state;
+
   const board = cloneBoard(state.board);
-  let changed = false;
   for (let r = 0; r < state.rows; r++) {
     for (let c = 0; c < state.cols; c++) {
       if (board[r][c].owner === playerId) {
         board[r][c] = { owner: null, count: 0 };
-        changed = true;
       }
     }
   }
-  if (!changed) return state;
 
-  const players = state.players.map((p) => (p.id === playerId ? { ...p, alive: false } : { ...p }));
+  // Treat removed/leaving players as out of active play; mark hasPlayed so they don't block progression.
+  const players = state.players.map((p) => (p.id === playerId ? { ...p, alive: false, hasPlayed: true } : { ...p }));
   const nextState: GameState = {
     ...state,
     board,
@@ -165,7 +166,9 @@ export function removePlayerCells(state: GameState, playerId: PlayerId): GameSta
   if (everyonePlayed) {
     const counts = orbCountsByPlayer(nextState);
     for (let i = 0; i < nextState.players.length; i++) {
-      if (counts[i] === 0) nextState.players[i].alive = false;
+      if (nextState.players[i].alive && counts[i] === 0) {
+        nextState.players[i].alive = false;
+      }
     }
   }
 
@@ -174,9 +177,16 @@ export function removePlayerCells(state: GameState, playerId: PlayerId): GameSta
     nextState.status = 'finished';
     nextState.winner = alivePlayers.length === 1 ? alivePlayers[0].id : null;
   } else {
-    const cur = nextState.players[nextState.currentPlayerIndex];
-    if (!cur || !cur.alive) {
-      nextState.currentPlayerIndex = nextAliveIndex(nextState, nextState.currentPlayerIndex);
+    // If only one (or zero) remains even before everyone has "played" in normal flow,
+    // end the game so removed/opponent-gone states don't hang.
+    if (alivePlayers.length <= 1) {
+      nextState.status = 'finished';
+      nextState.winner = alivePlayers.length === 1 ? alivePlayers[0].id : null;
+    } else {
+      const cur = nextState.players[nextState.currentPlayerIndex];
+      if (!cur || !cur.alive) {
+        nextState.currentPlayerIndex = nextAliveIndex(nextState, nextState.currentPlayerIndex);
+      }
     }
   }
   return nextState;
