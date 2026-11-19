@@ -75,7 +75,7 @@ export function RoomCodeChip({ code, onCopied }: RoomCodeChipProps) {
     >
       <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", lineHeight: 1.1 }}>
         <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", opacity: 0.8 }}>ROOM</span>
-        <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: "2px" }}>{code}</span>
+        <span data-testid="room-code" style={{ fontSize: 22, fontWeight: 800, letterSpacing: "2px" }}>{code}</span>
       </span>
       <motion.span
         key={copied ? "check" : "copy"}

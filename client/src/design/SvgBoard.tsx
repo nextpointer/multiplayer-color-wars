@@ -1,6 +1,6 @@
 import React, { useEffect } from "react";
 import { motion } from "motion/react";
-import type { GameState } from "@game/shared";
+import { isPlayable, type GameState } from "@game/shared";
 import { visualsForPlayer, cellHighlight } from "./tokens";
 import { SLOTS, PIECE_R_F, DOT_R_F } from "../engine/geometry";
 import { SPRING } from "./motion";
@@ -57,6 +57,9 @@ export function SvgBoard(props: {
       viewBox={`0 0 ${boardW} ${boardH}`}
       style={{ overflow: "visible", display: "block", touchAction: "manipulation" }}
       shapeRendering="geometricPrecision"
+      data-testid="game-board"
+      data-rows={state.rows}
+      data-cols={state.cols}
     >
       <defs>
         <filter id="blur-soft" x="-50%" y="-50%" width="200%" height="200%">
@@ -69,6 +72,7 @@ export function SvgBoard(props: {
       <g>
         {Array.from({ length: state.rows }).map((_, r) =>
           Array.from({ length: state.cols }).map((__, c) => {
+            if (!isPlayable(state, r, c)) return null;
             const cell = state.board[r][c];
             const { x, y } = centerOf(r, c, metrics.cell, metrics.gap);
             const owner = cell.owner != null ? state.players[cell.owner] : null;
@@ -79,7 +83,16 @@ export function SvgBoard(props: {
             );
             const fill = seat ? cellHighlight(seat.base) : "var(--cw-cell, #FCEDD0)";
             return (
-              <g key={`c-${r}-${c}`} onClick={() => playable && onMove(r, c)} style={{ cursor: playable ? "pointer" : "default" }}>
+              <g
+                key={`c-${r}-${c}`}
+                onClick={() => playable && onMove(r, c)}
+                style={{ cursor: playable ? "pointer" : "default" }}
+                data-testid={`cell-${r}-${c}`}
+                data-cell={`${r}-${c}`}
+                data-playable={playable ? "true" : "false"}
+                data-owner={cell.owner == null ? "" : String(cell.owner)}
+                data-count={cell.count}
+              >
                 <rect
                   x={c * (metrics.cell + metrics.gap)}
                   y={r * (metrics.cell + metrics.gap)}

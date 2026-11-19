@@ -1,4 +1,4 @@
-import { criticalMass, type Cell, type PlayerId } from "@game/shared";
+import { criticalMass, isPlayable, type Cell, type PlayerId } from "@game/shared";
 
 export type Dir = "N" | "S" | "W" | "E";
 
@@ -47,19 +47,23 @@ export function deriveMovePlan(args: {
   r: number;
   c: number;
   explosions: { r: number; c: number; owner: PlayerId }[];
+  mask?: boolean[][];
 }): MoveAnimationPlan {
-  const { rows, cols, preBoard, playerId, r, c, explosions } = args;
+  const { rows, cols, preBoard, playerId, r, c, explosions, mask } = args;
   const sim = cloneBoard(preBoard);
   const waves: BurstEvent[][] = [];
   let cursor = 0;
   let seq = 0;
+  const playable = (rr: number, cc: number) => rr >= 0 && rr < rows && cc >= 0 && cc < cols && (!mask || !!mask[rr]?.[cc]);
 
-  // first move: place a new cell with 3 dots; afterwards: increment own cell
-  const nextCount = sim[r][c].count === 0 ? 3 : sim[r][c].count + 1;
+  // Empty-cell placement starts with 3 dots everywhere; own cells increment by 1.
+  const isEmptyPlacement = sim[r][c].count === 0 && sim[r][c].owner == null;
+  const nextCount = isEmptyPlacement ? 3 : sim[r][c].count + 1;
   sim[r][c] = { owner: playerId, count: nextCount };
   const placement = { r, c, countAfter: sim[r][c].count };
   const queue: [number, number][] = [];
-  if (sim[r][c].count >= criticalMass(rows, cols, r, c)) {
+  const crit = criticalMass(rows, cols, r, c, mask);
+  if (sim[r][c].count >= crit) {
     queue.push([r, c]);
   }
 
@@ -75,7 +79,7 @@ export function deriveMovePlan(args: {
     const work = queue.splice(0, levelSize);
     for (let i = 0; i < work.length; i++) {
       const [cr, cc] = work[i];
-      const crit = criticalMass(rows, cols, cr, cc);
+      const crit = criticalMass(rows, cols, cr, cc, mask);
       if (sim[cr][cc].count < crit) continue; // stale
       const owner = sim[cr][cc].owner;
       if (owner == null) continue;
@@ -93,10 +97,10 @@ export function deriveMovePlan(args: {
       for (const d of DIRS) {
         const nr = cr + d.dr;
         const nc = cc + d.dc;
-        if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+        if (!playable(nr, nc)) continue;
         sim[nr][nc] = { owner, count: sim[nr][nc].count + 1 };
         targets.push({ tr: nr, tc: nc, dir: d.dir, captureOwner: owner, targetCountAfter: sim[nr][nc].count });
-        if (sim[nr][nc].count >= criticalMass(rows, cols, nr, nc)) {
+        if (sim[nr][nc].count >= criticalMass(rows, cols, nr, nc, mask)) {
           nextQueue.push([nr, nc]);
         }
       }

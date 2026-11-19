@@ -1,0 +1,15 @@
+{
+  "name": "@game/e2e",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node protocol.mjs && node core.mjs && node edge.mjs",
+    "test:protocol": "node protocol.mjs",
+    "test:core": "node core.mjs",
+    "test:edge": "node edge.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.65.1"
+  }
+}

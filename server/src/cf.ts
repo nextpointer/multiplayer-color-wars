@@ -63,6 +63,9 @@ export default {
         } else if (msg?.type === 'rejoin') {
           roomId = (msg?.roomId || '').toString().toUpperCase().trim();
           action = 'rejoin';
+        } else if (msg?.type === 'spectate') {
+          roomId = (msg?.roomId || '').toString().toUpperCase().trim();
+          action = 'spectate';
         } else {
           server.send(JSON.stringify({ type: 'error', message: 'Join or create a room first' }));
           return;
@@ -99,11 +102,13 @@ export default {
 
           // init room session in DO, then flush any queued client messages
           if (action === 'rejoin') {
-            ws.send(JSON.stringify({ type: 'rejoin', roomId, playerId: msg?.playerId, name }));
+            ws.send(JSON.stringify({ type: 'rejoin', roomId, playerId: msg?.playerId, name, clientId: msg?.clientId, tabId: msg?.tabId }));
           } else if (action === 'create') {
-            ws.send(JSON.stringify({ type: 'create', roomId, name, maxPlayers: msg?.maxPlayers, grid: msg?.grid }));
+            ws.send(JSON.stringify({ type: 'create', roomId, name, maxPlayers: msg?.maxPlayers, grid: msg?.grid, shape: msg?.shape, gameTimeMinutes: msg?.gameTimeMinutes, teamMode: msg?.teamMode, clientId: msg?.clientId, tabId: msg?.tabId }));
+          } else if (action === 'spectate') {
+            ws.send(JSON.stringify({ type: 'spectate', roomId, name, clientId: msg?.clientId, tabId: msg?.tabId }));
           } else {
-            ws.send(JSON.stringify({ type: action, roomId, name }));
+            ws.send(JSON.stringify({ type: 'join', roomId, name, clientId: msg?.clientId, tabId: msg?.tabId }));
           }
           flushPending();
         } catch {

@@ -4,15 +4,18 @@ Color Wars is a real-time multiplayer chain-reaction strategy game for 2–8 pla
 
 ## How to play
 
-- **Goal:** be the last player with dots on the board.
-- **First move:** place your starting move on an empty cell (creates 3 dots).
+- **Goal:** be the last player (or team) with dots on the board, or have the most dots when the overall game timer ends.
+- **First move:** place your starting move on an empty cell to start with **3 dots everywhere**.
 - **Later moves:** tap/click one of your own cells to add 1 dot.
 - **Explosions:** when a cell reaches its critical mass, it bursts and sends 1 dot to each orthogonal neighbor, capturing them.
   - Corner: 2
   - Edge: 3
   - Center: 4
 - **Chain reactions:** explosions can trigger more explosions.
-- **Players:** 2–8 players (board size can be selected when creating an online room; defaults are automatic).
+- **Players:** 2–8 players online, or play single-player vs computer.
+- **Timers:** choose an overall game timer of **10, 20, or 30 minutes**. Every turn is fixed to **1 minute** with a ring countdown. If a turn expires, a move is auto-played; if the overall game timer expires, the game ends and the winner is decided by most dots (then cells).
+- **Options:** choose board shape/grid and team mode. Online rooms support FFA and team modes (2v2 with 4 players, 3v3 with 6 players).
+- **Spectator mode:** anyone with a room code can watch as a spectator (read-only). Spectator presence is visible to everyone in the room/lobby/game. If a waiting room becomes empty, a spectator can join as a player and take the host seat.
 
 ## Project structure
 
@@ -82,7 +85,22 @@ Notes:
 bun run build
 ```
 
-This builds `shared`, `client`, and `server`.
+This builds and typechecks `shared`, `client`, and `server`, including the
+Cloudflare Worker/Durable Object files (`server/tsconfig.cf.json`).
+
+## Testing
+
+Test suites live in `e2e/` (shared rules, Node WebSocket protocol, and
+Playwright browser flows). With the client and server running:
+
+```bash
+bun e2e/shared-check.ts
+cd e2e
+bun install
+bun run test
+```
+
+See `e2e/README.md` for environment variables, individual suites, and artifacts.
 
 ## Self-hosting options
 
@@ -123,7 +141,8 @@ From repo root:
 
 - `bun run dev:server` — start server in dev/watch mode
 - `bun run dev:client` — start Vite client dev server
-- `bun run build` — build shared, client, and server
+- `bun run build` — build shared, client, and server; typecheck Cloudflare worker files
+- `bun run test:e2e` — run protocol, core, and edge suites (see `e2e/README.md`)
 
 Server package (`server/`):
 

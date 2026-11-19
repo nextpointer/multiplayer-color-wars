@@ -2,7 +2,7 @@ export type SoundName =
   | "ui.tap" | "ui.back" | "dot.add" | "charge.wobble" | "burst.pop"
   | "dot.land" | "capture.chord" | "cascade.tick" | "turn.you" | "turn.other"
   | "count.tick" | "count.go" | "join.pop" | "leave.pop" | "error.thud"
-  | "win.fanfare" | "lose.wah";
+  | "win.fanfare" | "lose.wah" | "timer.tick" | "timer.urgent";
 
 const NOTE_FREQ: Record<string, number> = {
   C4: 261.63, "C#4": 277.18, D4: 293.66, "D#4": 311.13, Eb4: 311.13, E4: 329.63, F4: 349.23, "F#4": 369.99, G4: 392.0, "G#4": 415.3, A4: 440.0, "A#4": 466.16, Bb4: 466.16, B4: 493.88,
@@ -187,6 +187,14 @@ export async function play(name: SoundName, opts?: { dotCount?: number; playerKe
       case "count.go":
         tone(ac, out, 523.25, t, 0.08, "triangle", 0.06);
         tone(ac, out, 783.99, t + 0.08, 0.12, "triangle", 0.06);
+        break;
+      case "timer.tick":
+        noiseHit(ac, out, t, 0.02, 0.03, 1400, 5200);
+        tone(ac, out, 880, t, 0.03, "sine", 0.02, 760);
+        break;
+      case "timer.urgent":
+        noiseHit(ac, out, t, 0.03, 0.045, 900, 5000);
+        tone(ac, out, 740, t, 0.05, "triangle", 0.045, 520);
         break;
       case "join.pop":
         tone(ac, out, 300, t, 0.08, "sine", 0.055, 900);

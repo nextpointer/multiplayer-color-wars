@@ -1,4 +1,4 @@
-import { applyMove, criticalMass, getValidMoves, orbCountsByPlayer, type GameState, type PlayerId } from "@game/shared";
+import { applyMove, criticalMass, getValidMoves, isPlayable, orbCountsByPlayer, type GameState, type PlayerId } from "@game/shared";
 
 export type BotDifficulty = "easy" | "medium" | "hard";
 
@@ -24,9 +24,9 @@ function isEdge(r: number, c: number, rows: number, cols: number) {
 }
 
 function cellStrategicValue(r: number, c: number, state: GameState): number {
-  const crit = criticalMass(state.rows, state.cols, r, c);
-  // lower critical mass (corners=2, edges=3, center=4) is generally safer/stronger to hold
-  let v = (4 - crit) * 6;
+  const crit = criticalMass(state.rows, state.cols, r, c, state.mask);
+  // lower critical mass is generally safer/stronger to hold
+  let v = (4 - Math.min(4, crit)) * 6;
   if (isCorner(r, c, state.rows, state.cols)) v += 8;
   else if (isEdge(r, c, state.rows, state.cols)) v += 3;
   return v;
@@ -63,9 +63,10 @@ function evaluateState(state: GameState, botId: PlayerId): number {
   // board features
   for (let r = 0; r < state.rows; r++) {
     for (let c = 0; c < state.cols; c++) {
+      if (!isPlayable(state, r, c)) continue;
       const cell = state.board[r][c];
       if (cell.owner == null) continue;
-      const crit = criticalMass(state.rows, state.cols, r, c);
+      const crit = criticalMass(state.rows, state.cols, r, c, state.mask);
       const danger = Math.max(0, crit - cell.count); // 1 means ready to explode
       const basePos = cellStrategicValue(r, c, state);
       const nearCritBonus = danger === 1 ? 10 : danger === 2 ? 4 : 1;
@@ -106,7 +107,7 @@ function evaluateState(state: GameState, botId: PlayerId): number {
 function moveOrderKey(move: BotMove, state: GameState, playerId: PlayerId): number {
   let k = 0;
   const cell = state.board[move.r][move.c];
-  const crit = criticalMass(state.rows, state.cols, move.r, move.c);
+  const crit = criticalMass(state.rows, state.cols, move.r, move.c, state.mask);
   if (cell.owner === playerId) {
     // adding to own cell: prefer near-critical and strategic
     const danger = crit - cell.count;

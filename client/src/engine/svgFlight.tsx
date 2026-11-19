@@ -128,9 +128,10 @@ export const SvgFlightEngine = forwardRef<SvgFlightEngineHandle, {}>(function Sv
   const gradSeqRef = useRef(0);
 
   const clear = () => {
+    runIdRef.current++;
+    playingRef.current = false;
     if (layerRef.current) layerRef.current.innerHTML = "";
     if (fxRef.current) fxRef.current.innerHTML = "";
-    playingRef.current = false;
   };
 
   /** radial gradient per player colour (cached) -> balls look like spheres, not flat discs */

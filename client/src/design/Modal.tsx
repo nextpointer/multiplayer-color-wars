@@ -1,5 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
+import { IconButton } from "./IconButton";
 import { SPRING } from "./motion";
 
 export type ModalProps = {
@@ -12,10 +13,23 @@ export type ModalProps = {
 
 export function Modal({ open, onClose, title, children, actions }: ModalProps) {
   const reduce = useReducedMotion();
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
   return (
     <AnimatePresence>
       {open ? (
         <motion.div
+          data-testid="modal-backdrop"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -54,11 +68,20 @@ export function Modal({ open, onClose, title, children, actions }: ModalProps) {
               color: "var(--cw-ink)",
             }}
           >
-            {title ? (
-              <h2 className="cw-h2" style={{ margin: "0 0 12px 0" }}>
-                {title}
-              </h2>
-            ) : null}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: title ? 12 : 8 }}>
+              {title ? (
+                <h2 className="cw-h2" style={{ margin: 0, minWidth: 0 }}>
+                  {title}
+                </h2>
+              ) : <span />}
+              <IconButton
+                variant="ghost"
+                icon="close"
+                ariaLabel="Close"
+                onClick={onClose}
+                style={{ width: 40, height: 40, minWidth: 40, minHeight: 40, flex: "0 0 40px" }}
+              />
+            </div>
             <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>{children}</div>
             {actions ? <div style={{ marginTop: 16, display: "flex", gap: 12, justifyContent: "flex-end" }}>{actions}</div> : null}
           </motion.div>

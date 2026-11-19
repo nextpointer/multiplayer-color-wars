@@ -29,7 +29,9 @@ export function ToastProvider({ children, avoidQuit = false }: { children: React
     <Ctx.Provider value={value}>
       {children}
       <div
+        role="status"
         aria-live="polite"
+        data-testid="toast"
         style={{
           position: "fixed",
           left: 0,
