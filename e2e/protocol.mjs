@@ -175,23 +175,25 @@ async function test(name, fn) {
     assert(/Already joined this room/i.test(err.message), `unexpected duplicate-join error: ${err.message}`);
   });
 
-  await test('4. rejoin after disconnect restores seat and board during play', async () => {
-    const a = await createRoom({ name: 'A', maxPlayers: 2, identPrefix: 'rejoin-a' });
-    const b = await joinRoom(a.room.roomId, { name: 'B', identPrefix: 'rejoin-b' });
-    const state = await startGame(a.c, [a.c, b.c]);
-    const before = JSON.stringify(state.board);
-    const beforeTurn = state.turnCount;
+  await test('4. disconnect during play removes player cells', async () => {
+    const a = await createRoom({ name: 'A', maxPlayers: 3, identPrefix: 'disc-a' });
+    const b = await joinRoom(a.room.roomId, { name: 'B', identPrefix: 'disc-b' });
+    const c = await joinRoom(a.room.roomId, { name: 'C', identPrefix: 'disc-c' });
+    const metas = { 0: a, 1: b, 2: c };
+    let state = await startGame(a.c, [a.c, b.c, c.c]);
 
-    b.c.close();
-    await a.c.next((m) => m.type === 'presence' && m.players.some((p) => p.id === 1 && p.connected === false));
+    const cp = state.players[state.currentPlayerIndex].id;
+    metas[cp].c.send({ type: 'move', r: 3, c: 3 });
+    state = (await metas[cp].c.next((m) => m.type === 'state' && m.state.turnCount === 1)).state;
+    const np = state.players[state.currentPlayerIndex].id;
+    metas[np].c.send({ type: 'move', r: 2, c: 2 });
+    state = (await metas[np].c.next((m) => m.type === 'state' && m.state.turnCount === 2)).state;
+    assert(state.board[3][3].owner === cp && state.board[2][2].owner === np, 'setup moves were not owned correctly');
 
-    const b2 = await openClient();
-    b2.send({ type: 'rejoin', roomId: a.room.roomId, playerId: 1, name: 'B', clientId: b.clientId, tabId: b.tabId });
-    const room = await b2.next((m) => m.type === 'room');
-    assert(room.role === 'player' && room.playerId === 1, `rejoin did not restore player: ${room.role}/${room.playerId}`);
-    assert(room.state.status === 'playing', `game should still be playing, got ${room.state.status}`);
-    assert(room.state.turnCount === beforeTurn, 'turn count changed across reconnect');
-    assert(JSON.stringify(room.state.board) === before, 'board changed across reconnect');
+    metas[np].c.close();
+    const after = await metas[cp].c.next((m) => m.type === 'state' && m.state.players.some((p) => p.id === np && p.alive === false), 8000);
+    assert(after.state.board.every((row) => row.every((cell) => cell.owner !== np)), 'disconnected player cells remain on the board');
+    assert(after.state.status === 'playing', `3-player game should continue after one disconnect, got ${after.state.status}`);
   });
 
   await test('5. rejoin with a mismatched clientId is rejected', async () => {
@@ -320,7 +322,7 @@ async function test(name, fn) {
     assert(JSON.stringify(state.players.map((p) => p.team)) === '[0,1,0,1,0,1]', '3v3 teams not interleaved');
   });
 
-  await test('15. leave removes cells; disconnected active players survive rejoin', async () => {
+  await test('15. explicit leave and disconnect remove player cells', async () => {
     const a = await createRoom({ name: 'A', maxPlayers: 3, grid: { rows: 7, cols: 7 }, identPrefix: 'leave-a' });
     const b = await joinRoom(a.room.roomId, { name: 'B', identPrefix: 'leave-b' });
     const c = await joinRoom(a.room.roomId, { name: 'C', identPrefix: 'leave-c' });
@@ -335,23 +337,17 @@ async function test(name, fn) {
     state = (await metas[np].c.next((m) => m.type === 'state' && m.state.turnCount === 2)).state;
     assert(state.board[3][3].owner === cp && state.board[2][2].owner === np, 'setup moves were not owned correctly');
 
+    // Explicit leave removes cells and marks player out.
     metas[cp].c.send({ type: 'leave' });
     const afterLeave = await metas[np].c.next((m) => m.type === 'state' && m.state.players.some((p) => p.id === cp && p.alive === false));
     assert(afterLeave.state.status === 'playing', `3-player game should continue after one leave, got ${afterLeave.state.status}`);
-    assert(afterLeave.state.board.every((row) => row.every((cell) => cell.owner !== cp)), 'leaver cells remain on the board');
+    assert(afterLeave.state.board.every((row) => row.every((cell) => cell.owner !== cp)), 'leaver cells remain on the board after explicit leave');
 
+    // Disconnect (player gone without explicit leave) also removes cells.
     const tp = [0, 1, 2].find((id) => id !== cp && id !== np);
-    const boardBefore = JSON.stringify(afterLeave.state.board);
     metas[np].c.close();
-    await metas[tp].c.next((m) => m.type === 'presence' && m.players.some((p) => p.id === np && p.connected === false));
-
-    const np2 = await openClient();
-    np2.send({ type: 'rejoin', roomId: a.room.roomId, playerId: np, name: `P${np}`, clientId: metas[np].clientId, tabId: metas[np].tabId });
-    const room = await np2.next((m) => m.type === 'room');
-    assert(room.role === 'player' && room.playerId === np, `active reconnect failed: ${room.role}/${room.playerId}`);
-    assert(room.state.status === 'playing', `game should still be playing after reconnect, got ${room.state.status}`);
-    assert(JSON.stringify(room.state.board) === boardBefore, 'board changed across active-player reconnect');
-    assert(room.state.board[2][2].owner === np, 'reconnected player lost their cells');
+    const afterDisc = await metas[tp].c.next((m) => m.type === 'state' && m.state.players.some((p) => p.id === np && p.alive === false), 8000);
+    assert(afterDisc.state.board.every((row) => row.every((cell) => cell.owner !== np)), 'disconnected player cells remain on the board');
   });
 
   await test('16. spectator can become player in empty waiting room', async () => {

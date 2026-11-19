@@ -511,6 +511,8 @@ function AppInner() {
       r, c,
       explosions,
       mask: pre.mask,
+      players: pre.players,
+      teamMode: pre.teamMode,
     });
 
     if (nextState.status === "finished" && plan.waves.length > 0) {
@@ -883,7 +885,7 @@ function AppInner() {
               }
               return;
             }
-            const plan = deriveMovePlan({ rows: prev.rows, cols: prev.cols, preBoard: prev.board, playerId: moverId, r: move.r, c: move.c, explosions: msg.explosions || [], mask: prev.mask });
+            const plan = deriveMovePlan({ rows: prev.rows, cols: prev.cols, preBoard: prev.board, playerId: moverId, r: move.r, c: move.c, explosions: msg.explosions || [], mask: prev.mask, players: prev.players, teamMode: prev.teamMode });
             if (plan.waves.length === 0 && prev.status !== msg.state.status) {
               // state changed without animation-worthy waves (e.g. removal leading to finish) - apply immediately
               // but still prefer showing final state; if finished we can just apply.

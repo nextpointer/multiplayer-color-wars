@@ -522,6 +522,11 @@ export function applyMove(state: GameState, playerId: PlayerId, r: number, c: nu
   const players = state.players.map((p) => ({ ...p }));
   const explosions: ExplosionStep[] = [];
   const isFirstPlacement = !current.hasPlayed;
+  const friendlyFireProtected = state.teamMode === '2v2' || state.teamMode === '3v3';
+  const teamById = new Map<PlayerId, number | undefined>();
+  if (friendlyFireProtected) {
+    for (const p of players) teamById.set(p.id, p.team);
+  }
 
   // First move on an empty cell starts with 3 dots everywhere.
   const nextCount = isFirstPlacement ? 3 : cell.count + 1;
@@ -568,7 +573,16 @@ export function applyMove(state: GameState, playerId: PlayerId, r: number, c: nu
     for (const [nr, nc] of dirs) {
       if (nr < 0 || nr >= state.rows || nc < 0 || nc >= state.cols) continue;
       if (!isPlayable(state, nr, nc)) continue;
-      board[nr][nc] = { owner, count: board[nr][nc].count + 1 };
+      const target = board[nr][nc];
+      let nextOwner = owner;
+      if (friendlyFireProtected && target.owner != null && target.owner !== owner) {
+        const oTeam = teamById.get(owner);
+        const tTeam = teamById.get(target.owner);
+        if (oTeam != null && tTeam != null && oTeam === tTeam) {
+          nextOwner = target.owner; // friendly fire protection: feed teammate instead of capturing
+        }
+      }
+      board[nr][nc] = { owner: nextOwner, count: target.count + 1 };
       if (board[nr][nc].count >= criticalMass(state.rows, state.cols, nr, nc, state.mask)) {
         queue.push([nr, nc]);
       }

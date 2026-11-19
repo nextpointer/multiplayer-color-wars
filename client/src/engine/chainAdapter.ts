@@ -48,13 +48,20 @@ export function deriveMovePlan(args: {
   c: number;
   explosions: { r: number; c: number; owner: PlayerId }[];
   mask?: boolean[][];
+  players?: { id: PlayerId; team?: number }[];
+  teamMode?: 'off' | '2v2' | '3v3' | 'ffa' | string;
 }): MoveAnimationPlan {
-  const { rows, cols, preBoard, playerId, r, c, explosions, mask } = args;
+  const { rows, cols, preBoard, playerId, r, c, explosions, mask, players, teamMode } = args;
   const sim = cloneBoard(preBoard);
   const waves: BurstEvent[][] = [];
   let cursor = 0;
   let seq = 0;
   const playable = (rr: number, cc: number) => rr >= 0 && rr < rows && cc >= 0 && cc < cols && (!mask || !!mask[rr]?.[cc]);
+  const teamModeOn = teamMode === '2v2' || teamMode === '3v3';
+  const teamById = new Map<PlayerId, number | undefined>();
+  if (teamModeOn && players) {
+    for (const p of players) teamById.set(p.id, p.team);
+  }
 
   // Empty-cell placement starts with 3 dots everywhere; own cells increment by 1.
   const isEmptyPlacement = sim[r][c].count === 0 && sim[r][c].owner == null;
@@ -98,8 +105,17 @@ export function deriveMovePlan(args: {
         const nr = cr + d.dr;
         const nc = cc + d.dc;
         if (!playable(nr, nc)) continue;
-        sim[nr][nc] = { owner, count: sim[nr][nc].count + 1 };
-        targets.push({ tr: nr, tc: nc, dir: d.dir, captureOwner: owner, targetCountAfter: sim[nr][nc].count });
+        const target = sim[nr][nc];
+        let nextOwner = owner;
+        if (teamModeOn && target.owner != null && target.owner !== owner) {
+          const oTeam = teamById.get(owner);
+          const tTeam = teamById.get(target.owner);
+          if (oTeam != null && tTeam != null && oTeam === tTeam) {
+            nextOwner = target.owner; // friendly fire protection: feed teammate
+          }
+        }
+        sim[nr][nc] = { owner: nextOwner, count: target.count + 1 };
+        targets.push({ tr: nr, tc: nc, dir: d.dir, captureOwner: nextOwner, targetCountAfter: sim[nr][nc].count });
         if (sim[nr][nc].count >= criticalMass(rows, cols, nr, nc, mask)) {
           nextQueue.push([nr, nc]);
         }

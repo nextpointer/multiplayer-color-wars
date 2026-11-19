@@ -752,13 +752,8 @@ export class RoomDO {
     }
 
     if (room.state.status === 'playing') {
-      if (p) {
-        p.connected = false;
-        p.quality = 'offline';
-        await this.persist();
-        this.broadcastPresence();
-        await this.rescheduleAlarm();
-      }
+      // Any player gone (disconnect/tab close) should have their cells removed.
+      await this.removeActivePlayer(playerId);
       return;
     }
 

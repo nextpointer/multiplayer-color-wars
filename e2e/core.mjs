@@ -347,9 +347,8 @@ async function test(name, fn) {
     console.log(`  info: room=${roomCode}; spectator sees live board`);
   });
 
-  await test('multiplayer: reconnect, rapid clicks, full game, results, rematch', async () => {
+  await test('multiplayer: rapid clicks, full game, results, back to lobby', async () => {
     if (!pageA || !pageB) throw new Error('missing multiplayer pages');
-    await pageA.reload({ waitUntil: 'domcontentloaded' });
     await waitGameScreen(pageA);
     const rapidPage = await waitForTurnPage([pageA, pageB], 30000);
     if (!rapidPage) throw new Error('no player ever got a turn');
@@ -376,7 +375,7 @@ async function test(name, fn) {
     await clickButton(pageA, 'BACK TO LOBBY');
     await pageA.getByText('Game Lobby').waitFor({ timeout: 15000 });
     await pageB.getByText('Game Lobby').waitFor({ timeout: 15000 });
-    console.log('  info: reconnect + rapid-click + finish + rematch observed');
+    console.log('  info: rapid-click + finish + back-to-lobby observed');
   });
 
   await test('multiplayer: spectator cannot move, sees result', async () => {

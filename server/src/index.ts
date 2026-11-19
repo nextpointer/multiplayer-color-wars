@@ -768,13 +768,8 @@ app.get(
         }
 
         if (room.state.status === 'playing') {
-          // temporary disconnect: keep player/cells in game and allow reconnect/rejoin.
-          // explicit "leave" action removes cells via removeActivePlayer.
-          p.connected = false;
-          p.quality = 'offline';
-          p.ws = null;
-          p.lastSeen = Date.now();
-          broadcastPresence(room);
+          // Any player gone (disconnect/tab close) should have their cells removed.
+          removeActivePlayer(room, sess.playerId, { closeSocket: false });
           return;
         }
 
