@@ -432,6 +432,10 @@ function AppInner() {
     const playerColors: Record<number, string> = {};
     for (const p of pre.players) playerColors[p.id] = p.color;
     const originColor = seatOfPlayer(pre.players[pre.currentPlayerIndex]).base;
+    // Keep turn indicator stable during chain-reaction animation to avoid color/turn flicker.
+    const animFrameBase: GameState = plan.waves.length > 0
+      ? { ...nextState, currentPlayerIndex: pre.currentPlayerIndex, turnDeadline: pre.turnDeadline, turnDurationMs: pre.turnDurationMs }
+      : nextState;
 
     const token = ++animTokenRef.current;
     animatingRef.current = true;
@@ -452,14 +456,14 @@ function AppInner() {
         playerColors,
         onWaveStart: (wi) => {
           if (token !== animTokenRef.current) return;
-          setDisplayState(boardToState(snapshots[wi], nextState));
+          setDisplayState(boardToState(snapshots[wi], animFrameBase));
           if (!reducedAnim) void play("burst.pop");
           if (!reducedAnim) haptic("medium");
         },
         onWaveArrivals: (wi) => {
           if (token !== animTokenRef.current) return;
           const snap = snapshots[wi + 1];
-          if (snap) setDisplayState(boardToState(snap, nextState));
+          if (snap) setDisplayState(boardToState(snap, animFrameBase));
           if (!reducedAnim) void play("cascade.tick", { step: wi });
         },
       });
@@ -515,8 +519,14 @@ function AppInner() {
       teamMode: pre.teamMode,
     });
 
-    if (nextState.status === "finished" && plan.waves.length > 0) {
+    const hasWaves = plan.waves.length > 0;
+    const turnStableState = hasWaves
+      ? { ...nextState, currentPlayerIndex: pre.currentPlayerIndex, turnDeadline: pre.turnDeadline, turnDurationMs: pre.turnDurationMs }
+      : nextState;
+    if (nextState.status === "finished" && hasWaves) {
       setServerState(pre);
+    } else if (hasWaves) {
+      setServerState(turnStableState);
     } else {
       setServerState(nextState);
     }
@@ -890,17 +900,24 @@ function AppInner() {
               // state changed without animation-worthy waves (e.g. removal leading to finish) - apply immediately
               // but still prefer showing final state; if finished we can just apply.
             }
+            // Keep turn indicator stable during chain-reaction animation to avoid color/turn flicker.
+            const hasWaves = plan.waves.length > 0;
+            const turnStableState = hasWaves
+              ? { ...msg.state, currentPlayerIndex: prev.currentPlayerIndex, turnDeadline: prev.turnDeadline, turnDurationMs: prev.turnDurationMs }
+              : msg.state;
             // If the game ends, keep showing/animating the final move before revealing results.
-            if (msg.state.status === "finished" && plan.waves.length > 0) {
+            if (msg.state.status === "finished" && hasWaves) {
               setServerState(prev);
+            } else if (hasWaves) {
+              setServerState(turnStableState);
             } else {
               setServerState(msg.state);
             }
             const animPromise = (playMoveAnimationRef.current ?? playMoveAnimation)(prev, plan, msg.state);
             const animTokenUsed = animTokenRef.current;
-            if (msg.state.status === "finished") {
+            if (hasWaves) {
               void animPromise.then(() => {
-                // Only reveal results if this animation is still current and we haven't reset to a new game/rematch.
+                // Only reveal final state if this animation is still current and we haven't reset to a new game/rematch.
                 if (animTokenRef.current !== animTokenUsed) return;
                 const live = serverStateRef.current;
                 if (live && (live.status === "waiting" || (live.status === "playing" && live.turnCount === 0))) return;
